@@ -61,6 +61,7 @@ local BE_SpawnBlocks   = makeBindable("SpawnBlocks",   "BindableEvent")    -- Ga
 local BE_ConsumeBlock  = makeBindable("ConsumeBlock",  "BindableEvent")    -- GameManager → BlockManager : ブロック消費
 local BE_ApplyPenalty  = makeBindable("ApplyPenalty",  "BindableEvent")    -- GameManager → BlockManager : ペナルティ
 local BF_GetHeldNumber = makeBindable("GetHeldNumber", "BindableFunction") -- GameManager → BlockManager : 持っている数字を問い合わせ
+local BE_GameWon       = makeBindable("GameWon",       "BindableEvent")    -- GameManager → ScoreManager : クリア通知＋全プレイヤー状態
 
 ------------------------------------------------------------------------
 -- RemoteEvents（クライアント通信）
@@ -382,8 +383,19 @@ end
 
 local function onWin()
 	print("[GameManager] Puzzle cleared!")
-	-- TODO: ScoreManager に最終集計を依頼
-	-- TODO: クリア演出・結果画面
+
+	-- 全プレイヤーの状態をScoreManagerに渡す
+	local snapshot = {}
+	for _, player in ipairs(Players:GetPlayers()) do
+		local ps = getPlayerState(player.UserId)
+		snapshot[player.UserId] = {
+			name         = player.Name,
+			score        = ps.score,
+			correctCount = ps.correctCount,
+			totalPlaced  = ps.totalPlaced,
+		}
+	end
+	BE_GameWon:Fire(snapshot)
 end
 
 ------------------------------------------------------------------------
