@@ -335,4 +335,15 @@ Players.PlayerRemoving:Connect(function(player)
 	penaltyUntil[userId] = nil
 end)
 
-print("[BlockManager] loaded")
+------------------------------------------------------------------------
+-- 準備完了フラグを立てる
+-- GameManager はこのフラグを WaitForChild で待ってから buildBoard を呼ぶ
+-- すべての Event:Connect / OnInvoke の設定が終わった後に作成すること
+------------------------------------------------------------------------
+
+local readyFlag = Instance.new("BoolValue")
+readyFlag.Name   = "BlockManagerReady"
+readyFlag.Value  = true
+readyFlag.Parent = serverEventsFolder
+
+print("[BlockManager] loaded – ready flag set")

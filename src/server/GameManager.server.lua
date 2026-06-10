@@ -492,6 +492,16 @@ end)
 
 ------------------------------------------------------------------------
 -- 起動
+-- BlockManager の準備完了フラグを待ってから盤面を生成する
+-- （BindableEventはハンドラ未接続時に発火すると消えるため）
 ------------------------------------------------------------------------
 
+local function waitForBlockManager()
+	-- フラグがすでに存在する場合はそのまま通過
+	if serverEventsFolder:FindFirstChild("BlockManagerReady") then return end
+	-- まだなら生成されるまで待つ
+	serverEventsFolder:WaitForChild("BlockManagerReady", 10)
+end
+
+waitForBlockManager()
 buildBoard("Normal")
