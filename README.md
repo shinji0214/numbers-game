@@ -81,6 +81,44 @@ numbers/
 
 ---
 
+## ブランチ運用ルール
+
+```
+master
+  └─ develop         ← 検証ブランチ
+       └─ feature/*  ← 機能開発ブランチ
+```
+
+| ブランチ | 役割 |
+|---------|------|
+| `master` | リリース済みの安定版 |
+| `develop` | 検証・統合ブランチ。動作確認はここで行う |
+| `feature/*` | 機能ごとの開発ブランチ。`develop` から切り、完成後に `develop` へマージ |
+
+### 開発フロー
+
+```bash
+# 1. develop から機能ブランチを作成
+git checkout develop
+git checkout -b feature/機能名
+
+# 2. 実装・コミット
+git add .
+git commit -m "feat: 〇〇を実装"
+
+# 3. develop にマージして検証
+git checkout develop
+git merge feature/機能名
+git push
+
+# 4. 検証OKなら master にマージ
+git checkout master
+git merge develop
+git push
+```
+
+---
+
 ## 開発状況
 
 ### 実装済み
