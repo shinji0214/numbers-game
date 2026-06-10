@@ -1,0 +1,17 @@
+# Rojo
+sourcemap.json
+
+# rokit
+.rokit/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Roblox Studio バイナリ
+*.rbxl
+*.rbxlx
