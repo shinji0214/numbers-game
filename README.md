@@ -11,7 +11,7 @@ Roblox マルチプレイナンプレゲーム
 
 | 項目 | 内容 |
 |------|------|
-| リポジトリ名 | numbers |
+| リポジトリ名 | [numbers-game](https://github.com/shinji0214/numbers-game) |
 | エンジン | Roblox |
 | 言語 | Lua (Luau) |
 | ビルドツール | [Rojo](https://rojo.space/) 7.6.1 |
@@ -30,7 +30,7 @@ Roblox マルチプレイナンプレゲーム
 
 ```bash
 # リポジトリをクローン
-git clone <repo-url>
+git clone https://github.com/shinji0214/numbers-game.git
 cd numbers
 
 # rokit で rojo をインストール
