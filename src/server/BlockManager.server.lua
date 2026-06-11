@@ -12,11 +12,11 @@ local Players             = game:GetService("Players")
 local BLOCK_SIZE      = 2.5
 local BLOCK_HEIGHT    = 1.2
 local BLOCK_Y         = 1.0
-local BOARD_SPAN      = 90      -- 9 × 10studs
-local EDGE_OFFSET     = 20      -- 盤面端からブロックエリアまでの距離 (studs)
-local BLOCK_SPACING   = 6       -- ブロック間隔 (studs)
-local DESPAWN_TIME    = 15      -- 落としたブロックが消えるまでの時間 (秒)
-local PICKUP_DISTANCE = 10      -- 拾える距離 (studs)
+local BOARD_SPAN      = 90
+local EDGE_OFFSET     = 20
+local BLOCK_SPACING   = 6
+local DESPAWN_TIME    = 15
+local PICKUP_DISTANCE = 10   -- ProximityPrompt の MaxActivationDistance と合わせる
 
 local NUMBER_COLORS = {
 	Color3.fromRGB(230, 80,  80),
@@ -31,21 +31,16 @@ local NUMBER_COLORS = {
 }
 
 ------------------------------------------------------------------------
--- ① ServerEvents を GameManager が作るまで待つ
+-- ServerEvents / RemoteEvents
 ------------------------------------------------------------------------
 
 local serverEventsFolder = ServerScriptService:WaitForChild("ServerEvents")
-local BE_SpawnBlocks     = serverEventsFolder:WaitForChild("SpawnBlocks")
-local BE_ConsumeBlock    = serverEventsFolder:WaitForChild("ConsumeBlock")
-local BE_ApplyPenalty    = serverEventsFolder:WaitForChild("ApplyPenalty")
-local BF_GetHeldNumber   = serverEventsFolder:WaitForChild("GetHeldNumber")
+local BE_SpawnBlocks   = serverEventsFolder:WaitForChild("SpawnBlocks")
+local BE_ConsumeBlock  = serverEventsFolder:WaitForChild("ConsumeBlock")
+local BE_ApplyPenalty  = serverEventsFolder:WaitForChild("ApplyPenalty")
+local BF_GetHeldNumber = serverEventsFolder:WaitForChild("GetHeldNumber")
 
-------------------------------------------------------------------------
--- RemoteEvents（クライアント通信）
-------------------------------------------------------------------------
-
-local remoteFolder    = ReplicatedStorage:WaitForChild("RemoteEvents")
-local RE_PickupBlock  = remoteFolder:WaitForChild("PickupBlock")
+local remoteFolder     = ReplicatedStorage:WaitForChild("RemoteEvents")
 local RE_PenaltyNotify = remoteFolder:WaitForChild("PenaltyNotify")
 
 local function getOrCreate(name, class)
@@ -59,21 +54,88 @@ local function getOrCreate(name, class)
 end
 local RE_BlockPickedUp = getOrCreate("BlockPickedUp", "RemoteEvent")
 local RE_BlockDropped  = getOrCreate("BlockDropped",  "RemoteEvent")
+local RE_DropBlock     = getOrCreate("DropBlock",     "RemoteEvent")  -- クライアント → サーバー: 任意ドロップ
 
 ------------------------------------------------------------------------
 -- 状態管理
 ------------------------------------------------------------------------
 
-local blockFolder = Instance.new("Folder")
+local blockFolder  = Instance.new("Folder")
 blockFolder.Name   = "Blocks"
 blockFolder.Parent = workspace
 
-local spawnPoints  = {}   -- [part] = originalCFrame
-local heldBlocks   = {}   -- [userId] = part
-local penaltyUntil = {}   -- [userId] = tick()
+local spawnPoints  = {}  -- [part] = originalCFrame
+local heldBlocks   = {}  -- [userId] = part（ワールド上のblock Part）
+local penaltyUntil = {}  -- [userId] = tick()
 
 ------------------------------------------------------------------------
--- ブロック Part 生成
+-- Tool 生成・装備（手持ちモデル）
+------------------------------------------------------------------------
+
+local function createAndEquipTool(player, num)
+	local char = player.Character
+	if not char then return end
+
+	-- 既存のツールがあれば削除
+	for _, obj in ipairs(char:GetChildren()) do
+		if obj:IsA("Tool") and obj.Name == "NumberBlock" then
+			obj:Destroy()
+		end
+	end
+
+	local tool = Instance.new("Tool")
+	tool.Name           = "NumberBlock"
+	tool.RequiresHandle = true
+	tool.CanBeDropped   = false   -- バックパックUIからドロップ不可
+	tool.ToolTip        = tostring(num)
+	tool:SetAttribute("Number", num)
+
+	-- ハンドル（手に持つ見た目）
+	local handle = Instance.new("Part")
+	handle.Name          = "Handle"
+	handle.Size          = Vector3.new(BLOCK_SIZE, BLOCK_HEIGHT, BLOCK_SIZE)
+	handle.Color         = NUMBER_COLORS[num]
+	handle.Material      = Enum.Material.SmoothPlastic
+	handle.TopSurface    = Enum.SurfaceType.Smooth
+	handle.BottomSurface = Enum.SurfaceType.Smooth
+	handle.CastShadow    = false
+
+	-- ハンドル上面に数字表示
+	local gui = Instance.new("SurfaceGui")
+	gui.Name       = "BlockGui"
+	gui.Face       = Enum.NormalId.Top
+	gui.SizingMode = Enum.SurfaceGuiSizingMode.FixedSize
+	gui.CanvasSize = Vector2.new(80, 80)
+	gui.Parent     = handle
+
+	local label = Instance.new("TextLabel")
+	label.Size                   = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.TextScaled             = true
+	label.Text                   = tostring(num)
+	label.TextColor3             = Color3.fromRGB(255, 255, 255)
+	label.Font                   = Enum.Font.GothamBold
+	label.Parent                 = gui
+
+	handle.Parent = tool
+
+	-- キャラクターに直接追加 → 即装備
+	tool.Parent = char
+end
+
+local function removeHeldTool(player)
+	local char = player.Character
+	if not char then return end
+	for _, obj in ipairs(char:GetChildren()) do
+		if obj:IsA("Tool") and obj.Name == "NumberBlock" then
+			obj:Destroy()
+			return
+		end
+	end
+end
+
+------------------------------------------------------------------------
+-- ブロック Part 生成（ProximityPrompt 付き）
 ------------------------------------------------------------------------
 
 local function createBlockPart(num, position)
@@ -92,7 +154,7 @@ local function createBlockPart(num, position)
 	part:SetAttribute("IsHeld",      false)
 	part:SetAttribute("IsDespawning", false)
 
-	-- 上面に数字を表示
+	-- 上面に数字
 	local gui = Instance.new("SurfaceGui")
 	gui.Name       = "BlockGui"
 	gui.Face       = Enum.NormalId.Top
@@ -101,7 +163,6 @@ local function createBlockPart(num, position)
 	gui.Parent     = part
 
 	local label = Instance.new("TextLabel")
-	label.Name                   = "NumLabel"
 	label.Size                   = UDim2.fromScale(1, 1)
 	label.BackgroundTransparency = 1
 	label.TextScaled             = true
@@ -110,17 +171,32 @@ local function createBlockPart(num, position)
 	label.Font                   = Enum.Font.GothamBold
 	label.Parent                 = gui
 
+	-- ProximityPrompt（拾うUI）
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.ActionText           = "拾う"
+	prompt.ObjectText           = tostring(num)
+	prompt.KeyboardKeyCode      = Enum.KeyCode.E
+	prompt.MaxActivationDistance = PICKUP_DISTANCE
+	prompt.HoldDuration         = 0       -- 押しっぱなし不要
+	prompt.RequiresLineOfSight  = false
+	prompt.Enabled              = true
+	prompt.Parent               = part
+
+	-- ProximityPrompt が Triggered されたらサーバー側で拾う処理
+	prompt.Triggered:Connect(function(player)
+		handlePickupBlock(player, part)
+	end)
+
 	part.Parent = blockFolder
 	return part
 end
 
 ------------------------------------------------------------------------
--- スポーン座標の生成（四辺にランダム配置）
+-- スポーン座標生成（四辺ランダム配置）
 ------------------------------------------------------------------------
 
 local function generateSpawnPositions(blockList)
 	local half  = BOARD_SPAN / 2 + EDGE_OFFSET
-
 	local sides = {
 		function(t) return Vector3.new(t,     BLOCK_Y,  half) end,
 		function(t) return Vector3.new(t,     BLOCK_Y, -half) end,
@@ -128,7 +204,6 @@ local function generateSpawnPositions(blockList)
 		function(t) return Vector3.new(-half, BLOCK_Y,  t)    end,
 	}
 
-	-- シャッフル
 	local shuffled = {table.unpack(blockList)}
 	for k = #shuffled, 2, -1 do
 		local r = math.random(k)
@@ -142,9 +217,7 @@ local function generateSpawnPositions(blockList)
 
 	for _, num in ipairs(shuffled) do
 		local posInSide = countInSide - math.floor(perSide / 2)
-		local pos = sides[sideIndex](posInSide * BLOCK_SPACING)
-		table.insert(result, {num = num, pos = pos})
-
+		table.insert(result, {num = num, pos = sides[sideIndex](posInSide * BLOCK_SPACING)})
 		countInSide += 1
 		if countInSide >= perSide then
 			countInSide = 0
@@ -156,7 +229,7 @@ local function generateSpawnPositions(blockList)
 end
 
 ------------------------------------------------------------------------
--- ① ブロックをスポーン（GameManager から BE_SpawnBlocks で呼ばれる）
+-- ブロックをスポーン
 ------------------------------------------------------------------------
 
 local function spawnBlocks(blockList)
@@ -169,14 +242,13 @@ local function spawnBlocks(blockList)
 		local part = createBlockPart(data.num, data.pos)
 		spawnPoints[part] = part.CFrame
 	end
-
 	print(string.format("[BlockManager] Spawned %d blocks", #spawnData))
 end
 
 BE_SpawnBlocks.Event:Connect(spawnBlocks)
 
 ------------------------------------------------------------------------
--- リスポーン（元の位置に戻す）
+-- リスポーン
 ------------------------------------------------------------------------
 
 local function respawnBlock(part)
@@ -190,103 +262,32 @@ local function respawnBlock(part)
 	part.Anchored     = true
 	part.CanCollide   = true
 	part.CFrame       = origin
+
+	-- ProximityPrompt を再有効化
+	local prompt = part:FindFirstChildOfClass("ProximityPrompt")
+	if prompt then prompt.Enabled = true end
 end
 
-------------------------------------------------------------------------
--- ③ ブロック消費（本置き後に呼ばれる）
---    正解・不正解問わず、本置きしたら手持ちブロックを消費して
---    リスポーンキューに入れる
-------------------------------------------------------------------------
-
-local function consumeHeldBlock(player)
-	local userId = player.UserId
-	local held   = heldBlocks[userId]
-	if not held then return end
-
-	heldBlocks[userId] = nil
-	held:SetAttribute("IsHeld", false)
-	held:SetAttribute("IsDespawning", true)
-
-	-- クライアントに「ブロックを手放した」を通知
-	RE_BlockDropped:FireClient(player)
-
-	-- フェードアウトしてリスポーン
-	task.spawn(function()
-		task.wait(DESPAWN_TIME - 1.5)  -- リスポーン直前まで待機
-		if held and held.Parent then
-			-- フェードアウト
-			for i = 1, 5 do
-				if held and held.Parent then
-					held.Transparency = i / 5
-				end
-				task.wait(0.3)
-			end
-			respawnBlock(held)
-		end
-	end)
-end
-
-BE_ConsumeBlock.Event:Connect(consumeHeldBlock)
-
-------------------------------------------------------------------------
--- ④ ペナルティ適用（GameManager から BE_ApplyPenalty で呼ばれる）
-------------------------------------------------------------------------
-
-local function applyPenalty(player, duration)
-	local userId = player.UserId
-	penaltyUntil[userId] = tick() + duration
-
-	local held = heldBlocks[userId]
-	if not held then return end
-
-	-- 足元に落とす
-	local char = player.Character
-	local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-	if hrp then
-		held.CFrame   = CFrame.new(hrp.Position + Vector3.new(0, 1, 0))
-		held.Anchored = false
-	end
-
-	held:SetAttribute("IsHeld",       false)
-	held:SetAttribute("IsDespawning", true)
-	heldBlocks[userId] = nil
-
-	RE_BlockDropped:FireClient(player)
-
-	-- フェードアウトしてリスポーン
+local function startDespawnTimer(part, onPlayer)
 	task.spawn(function()
 		task.wait(DESPAWN_TIME - 1.5)
-		if held and held.Parent then
-			for i = 1, 5 do
-				if held and held.Parent then
-					held.Transparency = i / 5
-				end
-				task.wait(0.3)
+		if not part or not part.Parent then return end
+		for i = 1, 5 do
+			if part and part.Parent then
+				part.Transparency = i / 5
 			end
-			respawnBlock(held)
+			task.wait(0.3)
 		end
+		respawnBlock(part)
 	end)
 end
 
-BE_ApplyPenalty.Event:Connect(applyPenalty)
-
 ------------------------------------------------------------------------
--- ⑤ 持っている数字を返す（GameManager から BF_GetHeldNumber で問い合わせ）
+-- ブロックを拾う
 ------------------------------------------------------------------------
 
-BF_GetHeldNumber.OnInvoke = function(userId)
-	local held = heldBlocks[userId]
-	if held then
-		return held:GetAttribute("Number")
-	end
-	return nil
-end
-
-------------------------------------------------------------------------
--- ブロックを拾う処理
-------------------------------------------------------------------------
-
-local function handlePickupBlock(player, blockPart)
+-- forward declaration（createBlockPart内のprompt.Triggeredで参照するため）
+handlePickupBlock = function(player, blockPart)
 	if not blockPart or not blockPart:IsA("BasePart") then return end
 
 	local userId = player.UserId
@@ -300,28 +301,112 @@ local function handlePickupBlock(player, blockPart)
 		return
 	end
 
-	-- 誰かが持っていたら無視
+	-- 誰かが持っている / デスポーン中は無視
 	if blockPart:GetAttribute("IsHeld") then return end
-
-	-- デスポーン中は拾えない
 	if blockPart:GetAttribute("IsDespawning") then return end
 
-	-- 距離チェック
-	local char = player.Character
-	local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-	if not hrp then return end
-	if (hrp.Position - blockPart.Position).Magnitude > PICKUP_DISTANCE then return end
-
-	-- 拾う
+	-- 拾う：ワールドから非表示にして heldBlocks に登録
 	blockPart:SetAttribute("IsHeld", true)
-	blockPart.Anchored   = true
-	blockPart.CanCollide = false
-	heldBlocks[userId]   = blockPart
+	blockPart.Transparency = 1
+	blockPart.CanCollide   = false
+
+	-- ProximityPrompt を無効化（他のプレイヤーに表示されないように）
+	local prompt = blockPart:FindFirstChildOfClass("ProximityPrompt")
+	if prompt then prompt.Enabled = false end
+
+	heldBlocks[userId] = blockPart
+
+	-- Tool を生成して手に持たせる
+	createAndEquipTool(player, blockPart:GetAttribute("Number"))
 
 	RE_BlockPickedUp:FireClient(player, blockPart:GetAttribute("Number"))
 end
 
-RE_PickupBlock.OnServerEvent:Connect(handlePickupBlock)
+------------------------------------------------------------------------
+-- ブロックを消費（本置き後）
+------------------------------------------------------------------------
+
+local function consumeHeldBlock(player)
+	local userId = player.UserId
+	local held   = heldBlocks[userId]
+	if not held then return end
+
+	heldBlocks[userId] = nil
+	removeHeldTool(player)
+	RE_BlockDropped:FireClient(player)
+
+	-- ブロック Part をフェードしてリスポーン
+	startDespawnTimer(held)
+end
+
+BE_ConsumeBlock.Event:Connect(consumeHeldBlock)
+
+------------------------------------------------------------------------
+-- ペナルティ適用
+------------------------------------------------------------------------
+
+local function applyPenalty(player, duration)
+	local userId = player.UserId
+	penaltyUntil[userId] = tick() + duration
+
+	local held = heldBlocks[userId]
+	if held then
+		-- 足元に落とす
+		local char = player.Character
+		local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+		if hrp then
+			held.CFrame       = CFrame.new(hrp.Position + Vector3.new(0, 1, 0))
+			held.Transparency = 0
+		end
+		held:SetAttribute("IsHeld",       false)
+		held:SetAttribute("IsDespawning", true)
+		held.Anchored  = false
+		heldBlocks[userId] = nil
+		startDespawnTimer(held)
+	end
+
+	removeHeldTool(player)
+	RE_BlockDropped:FireClient(player)
+end
+
+BE_ApplyPenalty.Event:Connect(applyPenalty)
+
+------------------------------------------------------------------------
+-- 任意ドロップ（捨てるボタン）
+------------------------------------------------------------------------
+
+local function handleDropBlock(player)
+	local userId = player.UserId
+	local held   = heldBlocks[userId]
+	if not held then return end
+
+	local char = player.Character
+	local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+	if hrp then
+		held.CFrame       = CFrame.new(hrp.Position + Vector3.new(0, 1, 2))
+		held.Transparency = 0
+	end
+
+	held:SetAttribute("IsHeld",       false)
+	held:SetAttribute("IsDespawning", true)
+	held.Anchored  = false
+	heldBlocks[userId] = nil
+
+	removeHeldTool(player)
+	RE_BlockDropped:FireClient(player)
+	startDespawnTimer(held)
+end
+
+RE_DropBlock.OnServerEvent:Connect(handleDropBlock)
+
+------------------------------------------------------------------------
+-- 持っている数字を返す（GameManager → BF_GetHeldNumber）
+------------------------------------------------------------------------
+
+BF_GetHeldNumber.OnInvoke = function(userId)
+	local held = heldBlocks[userId]
+	return held and held:GetAttribute("Number") or nil
+end
 
 ------------------------------------------------------------------------
 -- プレイヤー退出時クリーンアップ
@@ -331,14 +416,13 @@ Players.PlayerRemoving:Connect(function(player)
 	local userId = player.UserId
 	local held   = heldBlocks[userId]
 	if held then respawnBlock(held) end
+	removeHeldTool(player)
 	heldBlocks[userId]   = nil
 	penaltyUntil[userId] = nil
 end)
 
 ------------------------------------------------------------------------
--- 準備完了フラグを立てる
--- GameManager はこのフラグを WaitForChild で待ってから buildBoard を呼ぶ
--- すべての Event:Connect / OnInvoke の設定が終わった後に作成すること
+-- 準備完了フラグ
 ------------------------------------------------------------------------
 
 local readyFlag = Instance.new("BoolValue")
