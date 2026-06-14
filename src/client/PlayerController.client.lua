@@ -118,55 +118,14 @@ RE_PenaltyNotify.OnClientEvent:Connect(function(remaining)
 end)
 
 ------------------------------------------------------------------------
--- キャラクター切替時リセット＋スポーン向き修正
--- 盤面レイアウト: 行→X軸、列→Z軸
--- プレイヤーは +Z 側（手前）にスポーンして -Z 方向（盤面奥）を向くのが正しい。
--- SpawnLocation の向きに依存せずコードで向きを補正する。
+-- キャラクター切替時リセット
 ------------------------------------------------------------------------
-
-local function orientPlayerToBoard(char)
-	local hrp      = char:WaitForChild("HumanoidRootPart", 5)
-	local humanoid = char:WaitForChild("Humanoid", 5)
-	if not hrp or not humanoid then return end
-
-	-- SpawnLocation の最終配置（サーバー処理）が終わるまで待つ。
-	-- Running / Idle に遷移 = 着地済み・サーバー配置完了 を意味する。
-	local settled = false
-	local conn
-	conn = humanoid.StateChanged:Connect(function(_, new)
-		if new == Enum.HumanoidStateType.Running
-		or new == Enum.HumanoidStateType.RunningNoPhysics
-		or new == Enum.HumanoidStateType.Landed
-		or new == Enum.HumanoidStateType.Standing then
-			settled = true
-		end
-	end)
-
-	local timeout = tick() + 3
-	while not settled and tick() < timeout do
-		task.wait(0.05)
-	end
-	conn:Disconnect()
-
-	local pos = hrp.Position
-	-- XZ 平面で盤面中心（0,0,0）を向かせる（Y は維持）
-	local lookPos = Vector3.new(0, pos.Y, 0)
-	if (Vector2.new(pos.X, pos.Z)).Magnitude > 0.5 then
-		hrp.CFrame = CFrame.new(pos, lookPos)
-	end
-end
 
 player.CharacterAdded:Connect(function(char)
 	character  = char
 	heldNumber = nil
 	_G.HeldNumber = nil
-	orientPlayerToBoard(char)
 end)
-
--- 初回スポーン（スクリプトロード時にすでにキャラクターが存在する場合）
-if player.Character then
-	orientPlayerToBoard(player.Character)
-end
 
 ------------------------------------------------------------------------
 -- 外部公開（HUDControllerのアクションボタンから呼ばれる）
