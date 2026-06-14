@@ -39,7 +39,7 @@ local savedCamCFrame = nil   -- 通常カメラのCFrameを保存
 
 local function getOverheadCFrame()
 	local pos = OVERHEAD_TARGET + Vector3.new(0, OVERHEAD_HEIGHT, 0)
-	return CFrame.lookAt(pos, OVERHEAD_TARGET, Vector3.new(0, 0, -1))
+	return CFrame.lookAt(pos, OVERHEAD_TARGET, Vector3.new(1, 0, 0))
 end
 
 ------------------------------------------------------------------------
