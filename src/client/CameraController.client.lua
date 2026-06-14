@@ -33,13 +33,14 @@ local savedCamCFrame = nil   -- 通常カメラのCFrameを保存
 ------------------------------------------------------------------------
 -- 俯瞰カメラ CFrame
 -- CFrame.lookAt の第3引数で up ベクトルを明示する。
--- up = Vector3.new(0, 0, -1) にすると画面上方向が盤面の -Z 方向（奥）になり
--- 歩いて盤面を見た向きと一致する。
+-- 盤面レイアウト: 行 → X軸、列 → Z軸
+-- up = (0,0,-1) で画面上方向 = -Z = 列1側（北）になり、
+-- プレイヤーが +Z 側から盤面を見た向きと一致する。
 ------------------------------------------------------------------------
 
 local function getOverheadCFrame()
 	local pos = OVERHEAD_TARGET + Vector3.new(0, OVERHEAD_HEIGHT, 0)
-	return CFrame.lookAt(pos, OVERHEAD_TARGET, Vector3.new(1, 0, 0))
+	return CFrame.lookAt(pos, OVERHEAD_TARGET, Vector3.new(0, 0, -1))
 end
 
 ------------------------------------------------------------------------
