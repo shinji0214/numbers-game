@@ -119,7 +119,7 @@ end
 ------------------------------------------------------------------------
 
 local function cellPosition(row, col)
-	return Vector3.new((row - 5) * CELL_SIZE, BOARD_Y, (col - 5) * CELL_SIZE)
+	return Vector3.new((col - 5) * CELL_SIZE, BOARD_Y, (row - 5) * CELL_SIZE)
 end
 
 local function blockColor(row, col)
