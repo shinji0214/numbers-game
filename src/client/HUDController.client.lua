@@ -320,6 +320,63 @@ dropBtn.Activated:Connect(function()
 end)
 
 ------------------------------------------------------------------------
+-- カメラ切替ボタン（左下）
+-- モバイルでのカメラ切替操作をサポート。PCではVキーと併用。
+-- 俯瞰中は「通常視点」、通常時は「俯瞰」と表示してトグル。
+------------------------------------------------------------------------
+
+local CAM_BTN_W = isMobile and 0.22 or 0.14
+local CAM_BTN_H = isMobile and 0.09 or 0.07
+
+local camBtn = Instance.new("TextButton", screenGui)
+camBtn.Position               = UDim2.fromScale(0.012, 1 - CAM_BTN_H - 0.02)
+camBtn.Size                   = UDim2.fromScale(CAM_BTN_W, CAM_BTN_H)
+camBtn.BackgroundColor3       = Color3.fromRGB(50, 70, 110)
+camBtn.BackgroundTransparency = 0.1
+camBtn.Text                   = ""
+camBtn.BorderSizePixel        = 0
+camBtn.AutoButtonColor        = true
+corner(camBtn, 10)
+
+local camBtnMain = Instance.new("TextLabel", camBtn)
+camBtnMain.Size                   = UDim2.fromScale(1, 0.6)
+camBtnMain.Position               = UDim2.fromScale(0, 0.08)
+camBtnMain.BackgroundTransparency = 1
+camBtnMain.Text                   = "俯瞰"
+camBtnMain.TextSize               = ts(isMobile and 18 or 16)
+camBtnMain.TextColor3             = Color3.fromRGB(255, 255, 255)
+camBtnMain.Font                   = Enum.Font.GothamBold
+camBtnMain.TextXAlignment         = Enum.TextXAlignment.Center
+
+if not isMobile then
+	local camBtnSub = Instance.new("TextLabel", camBtn)
+	camBtnSub.Size                   = UDim2.fromScale(1, 0.35)
+	camBtnSub.Position               = UDim2.fromScale(0, 0.62)
+	camBtnSub.BackgroundTransparency = 1
+	camBtnSub.Text                   = "[ V ]"
+	camBtnSub.TextSize               = ts(10)
+	camBtnSub.TextColor3             = Color3.fromRGB(200, 200, 200)
+	camBtnSub.Font                   = Enum.Font.Gotham
+	camBtnSub.TextXAlignment         = Enum.TextXAlignment.Center
+end
+
+-- 俯瞰状態に応じてボタン表示を更新
+local function updateCamButton(overhead)
+	camBtnMain.Text               = overhead and "通常視点" or "俯瞰"
+	camBtn.BackgroundColor3       = overhead
+		and Color3.fromRGB(100, 70, 30)
+		or  Color3.fromRGB(50, 70, 110)
+end
+
+camBtn.Activated:Connect(function()
+	local ctrl = _G.CameraController
+	if ctrl then ctrl.toggle() end
+	-- 表示更新は RenderStepped 側で自動追従
+end)
+
+-- Vキー操作との同期はペナルティループと共用する RenderStepped 内で行う（後述）
+
+------------------------------------------------------------------------
 -- スコア更新
 ------------------------------------------------------------------------
 
@@ -398,14 +455,28 @@ RE_PenaltyNotify.OnClientEvent:Connect(function(remaining)
 	penaltyPanel.Visible = true
 end)
 
+local lastOverheadState = false
+
 RunService.RenderStepped:Connect(function()
-	if not penaltyActive then return end
-	local left = penaltyEnd - tick()
-	if left <= 0 then
-		penaltyActive        = false
-		penaltyPanel.Visible = false
-	else
-		penaltyLabel.Text = string.format("ブロックを落とした！  %.1f秒", left)
+	-- ペナルティカウントダウン
+	if penaltyActive then
+		local left = penaltyEnd - tick()
+		if left <= 0 then
+			penaltyActive        = false
+			penaltyPanel.Visible = false
+		else
+			penaltyLabel.Text = string.format("ブロックを落とした！  %.1f秒", left)
+		end
+	end
+
+	-- カメラボタン表示をVキー操作と同期
+	local ctrl = _G.CameraController
+	if ctrl then
+		local overhead = ctrl.isOverhead()
+		if overhead ~= lastOverheadState then
+			lastOverheadState = overhead
+			updateCamButton(overhead)
+		end
 	end
 end)
 
