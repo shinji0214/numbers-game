@@ -32,13 +32,14 @@ local savedCamCFrame = nil   -- 通常カメラのCFrameを保存
 
 ------------------------------------------------------------------------
 -- 俯瞰カメラ CFrame
+-- CFrame.lookAt の第3引数で up ベクトルを明示する。
+-- up = Vector3.new(0, 0, -1) にすると画面上方向が盤面の -Z 方向（奥）になり
+-- 歩いて盤面を見た向きと一致する。
 ------------------------------------------------------------------------
 
 local function getOverheadCFrame()
-	return CFrame.new(
-		OVERHEAD_TARGET + Vector3.new(0, OVERHEAD_HEIGHT, 0),
-		OVERHEAD_TARGET
-	)
+	local pos = OVERHEAD_TARGET + Vector3.new(0, OVERHEAD_HEIGHT, 0)
+	return CFrame.lookAt(pos, OVERHEAD_TARGET, Vector3.new(0, 0, -1))
 end
 
 ------------------------------------------------------------------------
@@ -128,7 +129,7 @@ player.CharacterAdded:Connect(function(char)
 end)
 
 ------------------------------------------------------------------------
--- 外部公開：俯瞰中かどうかを返す（MarkerControllerが参照）
+-- 外部公開（MarkerController・HUDControllerが参照）
 ------------------------------------------------------------------------
 
 local CameraController = {}
@@ -137,8 +138,14 @@ function CameraController.isOverhead()
 	return isOverhead
 end
 
--- MarkerControllerが参照できるようにModuleScriptとして公開する場合は
--- ReplicatedStorageに移動する。現段階ではシンプルにグローバル変数で共有。
+function CameraController.toggle()
+	if isOverhead then
+		exitOverhead()
+	else
+		enterOverhead()
+	end
+end
+
 _G.CameraController = CameraController
 
 print("[CameraController] loaded")
