@@ -233,6 +233,11 @@ local function createCell(row, col, boardFolder, isPrefilled)
 	label.Text                   = ""
 	label.Parent                 = gui
 
+	-- SurfaceGui(Face=Top)の描画軸とカメラup方向が90°ずれるため-90°補正
+	local rot = Instance.new("UIRotation")
+	rot.Rotation = -90
+	rot.Parent   = label
+
 	cell.Parent = boardFolder
 	return cell
 end

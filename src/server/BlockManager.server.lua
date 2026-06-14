@@ -171,6 +171,10 @@ local function createBlockPart(num, position)
 	label.Font                   = Enum.Font.GothamBold
 	label.Parent                 = gui
 
+	local rot = Instance.new("UIRotation")
+	rot.Rotation = -90
+	rot.Parent   = label
+
 	-- ProximityPrompt（拾うUI）
 	local prompt = Instance.new("ProximityPrompt")
 	prompt.ActionText           = "拾う"
