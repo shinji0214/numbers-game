@@ -118,14 +118,36 @@ RE_PenaltyNotify.OnClientEvent:Connect(function(remaining)
 end)
 
 ------------------------------------------------------------------------
--- キャラクター切替時リセット
+-- キャラクター切替時リセット＋スポーン向き修正
+-- 盤面レイアウト: 行→X軸、列→Z軸
+-- プレイヤーは +Z 側（手前）にスポーンして -Z 方向（盤面奥）を向くのが正しい。
+-- SpawnLocation の向きに依存せずコードで向きを補正する。
 ------------------------------------------------------------------------
+
+local BOARD_FACE_DIRECTION = CFrame.new(Vector3.zero, Vector3.new(0, 0, -1))  -- 盤面中心を向く
+
+local function orientPlayerToBoard(char)
+	local hrp = char:WaitForChild("HumanoidRootPart", 5)
+	if not hrp then return end
+	-- スポーン直後は物理演算が落ち着いていないので 1フレーム待つ
+	task.wait()
+	local pos = hrp.Position
+	-- 現在位置は維持したまま、盤面中心（0,0,0）を向かせる
+	local lookPos = Vector3.new(0, pos.Y, 0)
+	hrp.CFrame = CFrame.new(pos, lookPos)
+end
 
 player.CharacterAdded:Connect(function(char)
 	character  = char
 	heldNumber = nil
 	_G.HeldNumber = nil
+	orientPlayerToBoard(char)
 end)
+
+-- 初回スポーン（スクリプトロード時にすでにキャラクターが存在する場合）
+if player.Character then
+	orientPlayerToBoard(player.Character)
+end
 
 ------------------------------------------------------------------------
 -- 外部公開（HUDControllerのアクションボタンから呼ばれる）
