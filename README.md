@@ -2,7 +2,7 @@
 
 Roblox マルチプレイナンプレゲーム
 
-巨大なナンプレ盤面を複数人で協力してクリアするRobloxゲーム。
+巨大なナンプレ盤面を複数人で協力してクリアするRobloxゲーム。  
 プレイヤーはアバターを操作して数字ブロックを拾い、盤面に配置していく。
 
 ---
@@ -24,7 +24,7 @@ Roblox マルチプレイナンプレゲーム
 ### 必要なもの
 - [Roblox Studio](https://www.roblox.com/create)
 - [Rokit](https://github.com/rojo-rbx/rokit)
-- Rojo Plugin（Roblox Studio内のプラグイン）
+- Rojo Plugin（Roblox Studio 内のプラグイン）
 
 ### 手順
 
@@ -48,36 +48,42 @@ Roblox Studio で Rojo プラグインを開き、`localhost:34872` に接続す
 
 ```
 numbers/
-├── default.project.json    # Rojo プロジェクト設定
-├── rokit.toml              # Rokit ツール設定
-├── roblox_sudoku_spec.md   # ゲーム仕様書
+├── default.project.json       # Rojo プロジェクト設定
+├── rokit.toml                 # Rokit ツール設定
+├── doc/                       # ドキュメント
+│   ├── spec.md                # ゲーム仕様書（決定済み）
+│   ├── pending.md             # 未決定事項
+│   ├── progress.md            # 実装進捗
+│   └── ideas.md               # 構想・アイデア
 └── src/
-    ├── server/             # ServerScriptService
-    │   ├── GameManager.server.lua   # 盤面生成・配置処理・スコア・クリア判定
-    │   ├── BlockManager.server.lua  # ブロックスポーン・拾う・消費・リスポーン
-    │   └── ScoreManager.server.lua  # クリア時ボーナス集計（未実装）
-    ├── client/             # StarterPlayerScripts
-    │   ├── PlayerController.client.lua   # ブロック拾う・置く操作
+    ├── server/                # ServerScriptService
+    │   ├── GameManager.server.lua       # 盤面生成・正解判定・スコア
+    │   ├── BlockManager.server.lua      # ブロックスポーン・拾う・リスポーン
+    │   ├── ScoreManager.server.lua      # クリア時ボーナス集計
+    │   └── GameStateManager.server.lua  # ゲーム状態管理（Lobby/InGame/Result）
+    ├── client/                # StarterPlayerScripts
+    │   ├── PlayerController.client.lua   # ブロック拾う・置く・捨てる操作
+    │   ├── HUDController.client.lua      # スコア・コンボ・アクションボタン・結果画面
     │   ├── CameraController.client.lua   # 俯瞰カメラ切替
-    │   └── MarkerController.client.lua   # マーカー設置
-    ├── shared/             # ReplicatedStorage
-    │   └── SudokuModule.lua   # ナンプレ生成・正解判定
-    └── gui/                # StarterGui
-        └── HUD.lua            # スコア・コンボ表示（未実装）
+    │   ├── MarkerController.client.lua   # マーカー設置
+    │   └── LobbyController.client.lua    # ロビーUI・難易度選択・暗転フェード
+    └── shared/                # ReplicatedStorage
+        └── SudokuModule.lua   # ナンプレ生成・正解判定
 ```
 
 ---
 
 ## ゲーム仕様（概要）
 
-詳細は [roblox_sudoku_spec.md](./roblox_sudoku_spec.md) を参照。
+詳細は [doc/spec.md](./doc/spec.md) を参照。
 
 | 項目 | 内容 |
 |------|------|
 | 想定人数 | 8〜16人（CPU追加可） |
 | 1ゲーム時間 | 5〜10分 |
 | 難易度 | Easy / Normal / Hard（変形盤面） |
-| 操作 | E キーでブロックを拾う・置く、V キーで俯瞰カメラ |
+| 操作 | E キーでブロックを拾う・置く、Q キーで捨てる、V キーで俯瞰カメラ |
+| マップ | Map 1（盤面中心 `-4307, 1862, 1923`） |
 
 ---
 
@@ -117,23 +123,12 @@ git merge develop
 git push
 ```
 
----
+### コミットメッセージ規則
 
-## 開発状況
-
-### 実装済み
-- [x] ナンプレ生成・正解判定（SudokuModule）
-- [x] 盤面の3D生成・描画
-- [x] ブロックスポーン・拾う・消費・リスポーン
-- [x] 本置きロジック（正解判定・ロック・上書き）
-- [x] スパム制限・ペナルティ
-- [x] コンボボーナス付きスコア加算
-- [x] 俯瞰カメラ切替
-- [x] マーカー機能
-
-### 未実装
-- [ ] ScoreManager（クリア時ボーナス集計）
-- [ ] HUD（スコア・コンボ画面表示）
-- [ ] クリア演出・結果画面
-- [ ] ロビー・マッチング画面
-- [ ] コレクション・バッジ報酬
+| プレフィックス | 用途 |
+|--------------|------|
+| `feat:` | 新機能 |
+| `fix:` | バグ修正 |
+| `refactor:` | リファクタリング |
+| `revert:` | 変更の取り消し |
+| `docs:` | ドキュメント変更 |
