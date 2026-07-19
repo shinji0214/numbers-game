@@ -11,12 +11,14 @@ local Players             = game:GetService("Players")
 
 local BLOCK_SIZE      = 2.5
 local BLOCK_HEIGHT    = 1.2
-local BLOCK_Y         = 1.0
+local BLOCK_Y         = 1863.0  -- Map 1 床面 Y≈1862 + ブロック半高さ
 local BOARD_SPAN      = 90
 local EDGE_OFFSET     = 20
 local BLOCK_SPACING   = 6
 local DESPAWN_TIME    = 15
-local PICKUP_DISTANCE = 10   -- ProximityPrompt の MaxActivationDistance と合わせる
+local PICKUP_DISTANCE = 10      -- ProximityPrompt の MaxActivationDistance と合わせる
+local BOARD_CENTER_X  = -4307   -- 盤面中心 X（GameManager と同値）
+local BOARD_CENTER_Z  =  1923   -- 盤面中心 Z（GameManager と同値）
 
 local NUMBER_COLORS = {
 	Color3.fromRGB(230, 80,  80),
@@ -52,9 +54,10 @@ local function getOrCreate(name, class)
 	end
 	return r
 end
-local RE_BlockPickedUp = getOrCreate("BlockPickedUp", "RemoteEvent")
-local RE_BlockDropped  = getOrCreate("BlockDropped",  "RemoteEvent")
-local RE_DropBlock     = getOrCreate("DropBlock",     "RemoteEvent")  -- クライアント → サーバー: 任意ドロップ
+local RE_BlockPickedUp  = getOrCreate("BlockPickedUp",  "RemoteEvent")
+local RE_BlockDropped   = getOrCreate("BlockDropped",   "RemoteEvent")
+local RE_DropBlock      = getOrCreate("DropBlock",      "RemoteEvent")  -- クライアント → サーバー: 任意ドロップ
+local RE_PickupNearest  = getOrCreate("PickupNearest",  "RemoteEvent")  -- クライアント → サーバー: UIボタンで最近ブロックを拾う
 
 ------------------------------------------------------------------------
 -- 状態管理
@@ -169,22 +172,23 @@ local function createBlockPart(num, position)
 	label.Text                   = tostring(num)
 	label.TextColor3             = Color3.fromRGB(255, 255, 255)
 	label.Font                   = Enum.Font.GothamBold
+	label.AnchorPoint            = Vector2.new(0.5, 0.5)
+	label.Position               = UDim2.fromScale(0.5, 0.5)
+	label.Rotation               = -90
 	label.Parent                 = gui
 
-	local rot = Instance.new("UIRotation")
-	rot.Rotation = -90
-	rot.Parent   = label
-
 	-- ProximityPrompt（拾うUI）
+	-- Style=Custom にしてクライアント側でカラー付きBillboardGuiを表示する
 	local prompt = Instance.new("ProximityPrompt")
-	prompt.ActionText           = "拾う"
-	prompt.ObjectText           = tostring(num)
-	prompt.KeyboardKeyCode      = Enum.KeyCode.E
+	prompt.ActionText            = "拾う"
+	prompt.ObjectText            = tostring(num)
+	prompt.KeyboardKeyCode       = Enum.KeyCode.E
 	prompt.MaxActivationDistance = PICKUP_DISTANCE
-	prompt.HoldDuration         = 0       -- 押しっぱなし不要
-	prompt.RequiresLineOfSight  = false
-	prompt.Enabled              = true
-	prompt.Parent               = part
+	prompt.HoldDuration          = 0
+	prompt.RequiresLineOfSight   = false
+	prompt.Style                 = Enum.ProximityPromptStyle.Custom
+	prompt.Enabled               = true
+	prompt.Parent                = part
 
 	-- ProximityPrompt が Triggered されたらサーバー側で拾う処理
 	prompt.Triggered:Connect(function(player)
@@ -202,10 +206,10 @@ end
 local function generateSpawnPositions(blockList)
 	local half  = BOARD_SPAN / 2 + EDGE_OFFSET
 	local sides = {
-		function(t) return Vector3.new(t,     BLOCK_Y,  half) end,
-		function(t) return Vector3.new(t,     BLOCK_Y, -half) end,
-		function(t) return Vector3.new( half, BLOCK_Y,  t)    end,
-		function(t) return Vector3.new(-half, BLOCK_Y,  t)    end,
+		function(t) return Vector3.new(BOARD_CENTER_X + t,    BLOCK_Y, BOARD_CENTER_Z + half)  end,
+		function(t) return Vector3.new(BOARD_CENTER_X + t,    BLOCK_Y, BOARD_CENTER_Z - half)  end,
+		function(t) return Vector3.new(BOARD_CENTER_X + half,  BLOCK_Y, BOARD_CENTER_Z + t)    end,
+		function(t) return Vector3.new(BOARD_CENTER_X - half,  BLOCK_Y, BOARD_CENTER_Z + t)    end,
 	}
 
 	local shuffled = {table.unpack(blockList)}
@@ -404,6 +408,36 @@ end
 RE_DropBlock.OnServerEvent:Connect(handleDropBlock)
 
 ------------------------------------------------------------------------
+-- 最近ブロックを拾う（UIボタン用）
+-- プレイヤーの位置から PICKUP_DISTANCE 以内で最も近い未保持ブロックを拾う
+------------------------------------------------------------------------
+
+local function handlePickupNearest(player)
+	local char = player.Character
+	local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+
+	local nearest, nearestDist = nil, PICKUP_DISTANCE
+	for _, part in ipairs(blockFolder:GetChildren()) do
+		if part:IsA("BasePart")
+		   and not part:GetAttribute("IsHeld")
+		   and not part:GetAttribute("IsDespawning") then
+			local dist = (hrp.Position - part.Position).Magnitude
+			if dist < nearestDist then
+				nearest     = part
+				nearestDist = dist
+			end
+		end
+	end
+
+	if nearest then
+		handlePickupBlock(player, nearest)
+	end
+end
+
+RE_PickupNearest.OnServerEvent:Connect(handlePickupNearest)
+
+------------------------------------------------------------------------
 -- 持っている数字を返す（GameManager → BF_GetHeldNumber）
 ------------------------------------------------------------------------
 
@@ -423,6 +457,25 @@ Players.PlayerRemoving:Connect(function(player)
 	removeHeldTool(player)
 	heldBlocks[userId]   = nil
 	penaltyUntil[userId] = nil
+end)
+
+------------------------------------------------------------------------
+-- ブロック全リセット（ゲーム終了時）
+------------------------------------------------------------------------
+
+local BE_ResetBlocks = getOrCreate("ResetBlocks", "BindableEvent")
+
+BE_ResetBlocks.Event:Connect(function()
+	-- 全プレイヤーのツールを削除
+	for userId, _ in pairs(heldBlocks) do
+		local player = Players:GetPlayerByUserId(userId)
+		if player then removeHeldTool(player) end
+	end
+	heldBlocks   = {}
+	penaltyUntil = {}
+	spawnPoints  = {}
+	blockFolder:ClearAllChildren()
+	print("[BlockManager] All blocks reset")
 end)
 
 ------------------------------------------------------------------------

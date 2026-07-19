@@ -17,8 +17,8 @@ local camera    = workspace.CurrentCamera
 -- 定数
 ------------------------------------------------------------------------
 
-local OVERHEAD_HEIGHT  = 90    -- 俯瞰カメラの高さ (studs)
-local OVERHEAD_TARGET  = Vector3.new(0, 0, 0)   -- 盤面の中心
+local OVERHEAD_HEIGHT  = 90                              -- 俯瞰カメラの盤面からの高さ (studs)
+local OVERHEAD_TARGET  = Vector3.new(-4307, 1862, 1923)  -- 盤面の中心（Map 1 に合わせて設定）
 local TWEEN_TIME       = 0.4   -- カメラ切替アニメーション時間 (秒)
 local OVERHEAD_KEY     = Enum.KeyCode.V
 
@@ -40,7 +40,7 @@ local savedCamCFrame = nil   -- 通常カメラのCFrameを保存
 
 local function getOverheadCFrame()
 	local pos = OVERHEAD_TARGET + Vector3.new(0, OVERHEAD_HEIGHT, 0)
-	return CFrame.lookAt(pos, OVERHEAD_TARGET, Vector3.new(0, 0, -1))
+	return CFrame.lookAt(pos, OVERHEAD_TARGET, Vector3.new(0, 0, 1))
 end
 
 ------------------------------------------------------------------------

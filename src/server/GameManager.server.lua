@@ -15,10 +15,12 @@ local SudokuModule = require(ReplicatedStorage.Shared.SudokuModule)
 -- 定数
 ------------------------------------------------------------------------
 
-local CELL_SIZE   = 10     -- 1マスのサイズ (studs)
-local CELL_HEIGHT = 0.5    -- マスの厚み (studs)
-local BOARD_Y     = 0.25   -- 盤面の床面高さ (baseplate上面=0を想定)
-local GAP         = 0.12   -- セル間の隙間 (グリッド線として見える)
+local CELL_SIZE      = 10      -- 1マスのサイズ (studs)
+local CELL_HEIGHT    = 0.5     -- マスの厚み (studs)
+local BOARD_Y        = 1862.25 -- 盤面の床面高さ（Map 1 床面 Y≈1862 に合わせて設定）
+local BOARD_CENTER_X = -4307   -- 盤面中心 X（Map 1 バウンディングボックス中心）
+local BOARD_CENTER_Z =  1923   -- 盤面中心 Z（Map 1 バウンディングボックス中心）
+local GAP            = 0.12    -- セル間の隙間 (グリッド線として見える)
 
 local COLOR = {
 	blockA    = Color3.fromRGB(215, 218, 232),
@@ -62,6 +64,8 @@ local BE_ConsumeBlock  = makeBindable("ConsumeBlock",  "BindableEvent")    -- Ga
 local BE_ApplyPenalty  = makeBindable("ApplyPenalty",  "BindableEvent")    -- GameManager → BlockManager : ペナルティ
 local BF_GetHeldNumber = makeBindable("GetHeldNumber", "BindableFunction") -- GameManager → BlockManager : 持っている数字を問い合わせ
 local BE_GameWon       = makeBindable("GameWon",       "BindableEvent")    -- GameManager → ScoreManager : クリア通知＋全プレイヤー状態
+local BE_BuildBoard    = makeBindable("BuildBoard",    "BindableEvent")    -- GameStateManager → GameManager : ゲーム開始
+local BE_ResetBoard    = makeBindable("ResetBoard",    "BindableEvent")    -- GameStateManager → GameManager : 盤面リセット
 
 ------------------------------------------------------------------------
 -- RemoteEvents（クライアント通信）
@@ -119,7 +123,11 @@ end
 ------------------------------------------------------------------------
 
 local function cellPosition(row, col)
-	return Vector3.new((col - 5) * CELL_SIZE, BOARD_Y, (row - 5) * CELL_SIZE)
+	return Vector3.new(
+		BOARD_CENTER_X + (col - 5) * CELL_SIZE,
+		BOARD_Y,
+		BOARD_CENTER_Z - (row - 5) * CELL_SIZE
+	)
 end
 
 local function blockColor(row, col)
@@ -231,12 +239,11 @@ local function createCell(row, col, boardFolder, isPrefilled)
 	label.BackgroundTransparency = 1
 	label.TextScaled             = true
 	label.Text                   = ""
+	-- SurfaceGui(Face=Top)の描画軸とカメラup方向(0,0,1)が-90°ずれるため補正
+	label.AnchorPoint            = Vector2.new(0.5, 0.5)
+	label.Position               = UDim2.fromScale(0.5, 0.5)
+	label.Rotation               = -90
 	label.Parent                 = gui
-
-	-- SurfaceGui(Face=Top)の描画軸とカメラup方向が90°ずれるため-90°補正
-	local rot = Instance.new("UIRotation")
-	rot.Rotation = -90
-	rot.Parent   = label
 
 	cell.Parent = boardFolder
 	return cell
@@ -252,8 +259,8 @@ local function createDividers(boardFolder)
 				and Vector3.new(0.25, CELL_HEIGHT + 0.2, span)
 				or  Vector3.new(span, CELL_HEIGHT + 0.2, 0.25)
 			part.Position      = axis == "V"
-				and Vector3.new((frac - 5) * CELL_SIZE, BOARD_Y + 0.1, 0)
-				or  Vector3.new(0, BOARD_Y + 0.1, (frac - 5) * CELL_SIZE)
+				and Vector3.new(BOARD_CENTER_X + (frac - 5) * CELL_SIZE, BOARD_Y + 0.1, BOARD_CENTER_Z)
+				or  Vector3.new(BOARD_CENTER_X, BOARD_Y + 0.1, BOARD_CENTER_Z - (frac - 5) * CELL_SIZE)
 			part.Anchored      = true
 			part.CanCollide    = false
 			part.Color         = COLOR.divider
@@ -274,10 +281,10 @@ local function createFrame(boardFolder)
 	local offset = span / 2 + thick / 2
 
 	local edges = {
-		{Vector3.new(span + thick * 2, height, thick), Vector3.new(0,       yPos, -offset)},
-		{Vector3.new(span + thick * 2, height, thick), Vector3.new(0,       yPos,  offset)},
-		{Vector3.new(thick, height, span),              Vector3.new(-offset, yPos,  0)},
-		{Vector3.new(thick, height, span),              Vector3.new( offset, yPos,  0)},
+		{Vector3.new(span + thick * 2, height, thick), Vector3.new(BOARD_CENTER_X,          yPos, BOARD_CENTER_Z - offset)},
+		{Vector3.new(span + thick * 2, height, thick), Vector3.new(BOARD_CENTER_X,          yPos, BOARD_CENTER_Z + offset)},
+		{Vector3.new(thick, height, span),              Vector3.new(BOARD_CENTER_X - offset, yPos, BOARD_CENTER_Z)},
+		{Vector3.new(thick, height, span),              Vector3.new(BOARD_CENTER_X + offset, yPos, BOARD_CENTER_Z)},
 	}
 
 	for _, e in ipairs(edges) do
@@ -496,17 +503,36 @@ Players.PlayerRemoving:Connect(function(player)
 end)
 
 ------------------------------------------------------------------------
--- 起動
--- BlockManager の準備完了フラグを待ってから盤面を生成する
--- （BindableEventはハンドラ未接続時に発火すると消えるため）
+-- 盤面リセット（ゲーム終了時）
 ------------------------------------------------------------------------
 
-local function waitForBlockManager()
-	-- フラグがすでに存在する場合はそのまま通過
-	if serverEventsFolder:FindFirstChild("BlockManagerReady") then return end
-	-- まだなら生成されるまで待つ
-	serverEventsFolder:WaitForChild("BlockManagerReady", 10)
+local function resetBoard()
+	local board = workspace:FindFirstChild("Board")
+	if board then board:Destroy() end
+	gameState.puzzle         = nil
+	gameState.solution       = nil
+	gameState.current        = nil
+	gameState.locked         = nil
+	gameState.cells          = nil
+	gameState.remainingCells = 0
+	playerState              = {}
+	lastPlaceTime            = {}
 end
 
-waitForBlockManager()
-buildBoard("Normal")
+------------------------------------------------------------------------
+-- GameStateManager からのイベント受信
+------------------------------------------------------------------------
+
+BE_BuildBoard.Event:Connect(function(difficulty)
+	-- BlockManager の準備完了フラグを待つ
+	if not serverEventsFolder:FindFirstChild("BlockManagerReady") then
+		serverEventsFolder:WaitForChild("BlockManagerReady", 10)
+	end
+	buildBoard(difficulty)
+end)
+
+BE_ResetBoard.Event:Connect(function()
+	resetBoard()
+end)
+
+print("[GameManager] loaded")

@@ -24,8 +24,9 @@ local RE_PenaltyNotify = remoteFolder:WaitForChild("PenaltyNotify")
 local RE_BoardReady    = remoteFolder:WaitForChild("BoardReady")
 local RE_GameResult    = remoteFolder:WaitForChild("GameResult")
 local RE_UpdateCell    = remoteFolder:WaitForChild("UpdateCell")
-local RE_BlockPickedUp = remoteFolder:WaitForChild("BlockPickedUp")
-local RE_BlockDropped  = remoteFolder:WaitForChild("BlockDropped")
+local RE_BlockPickedUp    = remoteFolder:WaitForChild("BlockPickedUp")
+local RE_BlockDropped     = remoteFolder:WaitForChild("BlockDropped")
+local RE_GameStateChanged = remoteFolder:WaitForChild("GameStateChanged")
 
 ------------------------------------------------------------------------
 -- プラットフォーム判定
@@ -58,8 +59,12 @@ local C = {
 	gold    = Color3.fromRGB(255, 200, 50),
 	silver  = Color3.fromRGB(190, 200, 210),
 	bronze  = Color3.fromRGB(200, 140, 80),
-	btnPlace = Color3.fromRGB(60,  140, 90),
-	btnDrop  = Color3.fromRGB(140, 60,  60),
+	btnPlace    = Color3.fromRGB(60,  140, 90),
+	btnDrop     = Color3.fromRGB(140, 60,  60),
+	-- タイル風カラー（鮮やか・ソリッド）
+	tilePlace   = Color3.fromRGB(45,  170, 90),
+	tileDrop    = Color3.fromRGB(195, 65,  60),
+	tileCam     = Color3.fromRGB(55,  105, 210),
 }
 
 ------------------------------------------------------------------------
@@ -237,81 +242,192 @@ local penaltyLabel = makeText(penaltyPanel, "ペナルティ  --秒", ts(16),
 -- モバイルでは大きめのタップ領域を確保
 ------------------------------------------------------------------------
 
--- ボタンサイズ：画面幅の12%、アスペクト比 2.5:1
-local BTN_W = isMobile and 0.18 or 0.13
-local BTN_H = isMobile and 0.09 or 0.07
-local BTN_GAP = 0.012
+------------------------------------------------------------------------
+-- ボタン定数
+-- モバイル: 円形ボタン（直径はピクセル固定、Y位置はスケール指定）
+--           AnchorPoint=(1,1) でボタン右下を基点とする
+-- PC:       スケールベースの角丸ボタン
+------------------------------------------------------------------------
 
-local function makeActionButton(parent, pos, label, subLabel, color)
+-- モバイル用定数（ビューポート取得で画面サイズ非依存に）
+-- ViewportSize は起動直後に (0,0) を返すことがあるため確定まで待機する
+local vp = workspace.CurrentCamera.ViewportSize
+if vp.X <= 1 then
+	workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Wait()
+	vp = workspace.CurrentCamera.ViewportSize
+end
+-- 短辺の17%を直径にする → iPhone SE〜iPad Pro まで適切なサイズに
+local M_PX       = math.round(math.min(vp.X, vp.Y) * 0.20)
+local M_EDGE_PX  = math.round(M_PX * 0.45)   -- 画面右端からの余白（ジャンプボタンに合わせて左寄せ）
+local M_GAP_PX   = math.round(M_PX * 0.40)   -- ボタン間の隙間（押し間違い防止）
+
+-- ボタン高さ・隙間をYスケールに換算（行間計算用）
+local M_PX_Y     = M_PX    / vp.Y
+local M_GAP_Y    = M_GAP_PX / vp.Y
+
+-- レイアウト（AnchorPoint=(1,1) → Positionはボタン右下コーナーの座標）
+--
+--   左列X offset  右列X offset
+--   [カメラ]      [拾う/置く]   ← 上段 Y = M_UPPER_Y
+--   [捨てる]      [Jump※]      ← 下段 Y = M_LOWER_Y
+--
+-- ※Roblox標準ジャンプボタンは右下に固定（約Y=0.88）
+
+local M_LOWER_Y   = 0.90                          -- 下段ボタン下辺（Jumpと同列）
+local M_UPPER_Y   = M_LOWER_Y - M_PX_Y - M_GAP_Y -- 上段ボタン下辺
+
+local M_RIGHT_COL       = M_EDGE_PX                    -- 右列: 右端から M_EDGE_PX
+local M_LEFT_COL        = M_EDGE_PX + M_PX + M_GAP_PX -- 左列: 右列の左に隙間を挟む
+local M_UPPER_SHIFT_PX  = math.round(M_PX * 0.25)     -- 上段ボタンを右にずらす量
+
+-- PC用スケール定数
+local BTN_W      = 0.13
+local BTN_H      = 0.07
+local BTN_GAP    = 0.012
+local BTN_BOTTOM = 0.02
+
+-- color = タイルカラー（tilePlace / tileDrop / tileCam）
+-- ボタンアイコン アセットID
+local ICON_PICKUP = "rbxassetid://109962355428219"
+local ICON_PLACE  = "rbxassetid://110724425029427"
+local ICON_DROP   = "rbxassetid://72269721103074"
+local ICON_CAM    = "rbxassetid://138754679857357"
+
+local function makeActionButton(parent, pos, size, anchor, imageId, subLabel, color)
 	local btn = Instance.new("TextButton", parent)
-	btn.Position            = pos
-	btn.Size                = UDim2.fromScale(BTN_W, BTN_H)
-	btn.BackgroundColor3    = color
-	btn.BackgroundTransparency = 0.1
-	btn.Text                = ""
-	btn.BorderSizePixel     = 0
-	btn.AutoButtonColor     = true
-	corner(btn, 10)
+	btn.AnchorPoint            = anchor
+	btn.Position               = pos
+	btn.Size                   = size
+	btn.BackgroundColor3       = color
+	btn.BackgroundTransparency = 0.05
+	btn.Text                   = ""
+	btn.BorderSizePixel        = 0
+	btn.AutoButtonColor        = true
+	corner(btn, isMobile and 999 or 12)
 
-	-- メインラベル
-	local main = Instance.new("TextLabel", btn)
-	main.Size                   = UDim2.fromScale(1, 0.6)
-	main.Position               = UDim2.fromScale(0, 0.08)
-	main.BackgroundTransparency = 1
-	main.Text                   = label
-	main.TextSize               = ts(isMobile and 18 or 16)
-	main.TextColor3             = Color3.fromRGB(255, 255, 255)
-	main.Font                   = Enum.Font.GothamBold
-	main.TextXAlignment         = Enum.TextXAlignment.Center
+	-- アイコン画像（透過PNG）
+	local icon = Instance.new("ImageLabel", btn)
+	icon.Size                   = UDim2.fromScale(0.65, 0.65)
+	icon.Position               = UDim2.fromScale(0.175, 0.04)
+	icon.BackgroundTransparency = 1
+	icon.Image                  = imageId
+	icon.ImageColor3            = Color3.fromRGB(255, 255, 255)
+	icon.ScaleType              = Enum.ScaleType.Fit
+	icon.ZIndex                 = 2
 
-	-- サブラベル（キー表示）
-	if not isMobile then
-		local sub = Instance.new("TextLabel", btn)
-		sub.Size                   = UDim2.fromScale(1, 0.35)
-		sub.Position               = UDim2.fromScale(0, 0.62)
-		sub.BackgroundTransparency = 1
-		sub.Text                   = subLabel
-		sub.TextSize               = ts(10)
-		sub.TextColor3             = Color3.fromRGB(200, 200, 200)
-		sub.Font                   = Enum.Font.Gotham
-		sub.TextXAlignment         = Enum.TextXAlignment.Center
-	end
+	-- ラベル（モバイル: アクション名、PC: キー表示）
+	local sub = Instance.new("TextLabel", btn)
+	sub.Size                   = UDim2.fromScale(1, 0.22)
+	sub.Position               = UDim2.fromScale(0, 0.77)
+	sub.BackgroundTransparency = 1
+	sub.Text                   = subLabel
+	sub.TextScaled             = true
+	sub.TextColor3             = Color3.fromRGB(255, 255, 255)
+	sub.Font                   = Enum.Font.GothamBold
+	sub.TextXAlignment         = Enum.TextXAlignment.Center
+	sub.TextStrokeColor3       = Color3.fromRGB(0, 0, 0)
+	sub.TextStrokeTransparency = 0.4
+	sub.ZIndex                 = 3
 
-	return btn
+	return btn, icon
 end
 
--- 捨てるボタン（右下左側）
-local dropBtnX = 1 - (BTN_W * 2 + BTN_GAP + 0.012)
+-- モバイル: AnchorPoint=(1,1) → Position は「ボタン右下コーナー」の座標
+--   X: スクリーン右端からのピクセル負オフセット
+--   Y: スケール（M_BTN_BOTTOM_SCALE = ボタン下辺のYスケール）
+-- PC: AnchorPoint=(0,0) → 従来通りのスケール指定
+
+-- 捨てるボタン（左列・下段 → Jumpボタンと同じ行）
 local dropBtn = makeActionButton(
 	screenGui,
-	UDim2.fromScale(dropBtnX, 1 - BTN_H - 0.02),
-	"捨てる", "[ Q ]",
-	C.btnDrop
+	isMobile
+		and UDim2.new(1, -M_LEFT_COL, M_LOWER_Y, 0)
+		or  UDim2.fromScale(1-(BTN_W*2+BTN_GAP+0.012), 1-BTN_H-BTN_BOTTOM),
+	isMobile and UDim2.fromOffset(M_PX, M_PX) or UDim2.fromScale(BTN_W, BTN_H),
+	isMobile and Vector2.new(1, 1) or Vector2.new(0, 0),
+	ICON_DROP, isMobile and "捨てる" or "[ Q ]", C.tileDrop
 )
 
--- 置くボタン（右下右側）
-local placeBtnX = 1 - BTN_W - 0.012
-local placeBtn = makeActionButton(
+-- 置く/拾うボタン（右列・上段 → Jumpボタンの上、上段シフト適用）
+local placeBtn, placeBtnImage = makeActionButton(
 	screenGui,
-	UDim2.fromScale(placeBtnX, 1 - BTN_H - 0.02),
-	"置く", "[ E ]",
-	C.btnPlace
+	isMobile
+		and UDim2.new(1, -(M_RIGHT_COL - M_UPPER_SHIFT_PX), M_UPPER_Y, 0)
+		or  UDim2.fromScale(1-BTN_W-0.012, 1-BTN_H-BTN_BOTTOM),
+	isMobile and UDim2.fromOffset(M_PX, M_PX) or UDim2.fromScale(BTN_W, BTN_H),
+	isMobile and Vector2.new(1, 1) or Vector2.new(0, 0),
+	ICON_PICKUP, isMobile and "拾う" or "[ E ]", C.tilePlace
 )
 
--- ボタンのアクティブ状態（ブロックを持っていないときは非アクティブ）
+-- ボタンのアクティブ状態
+-- 置く/拾うボタン: 常時アクティブ（手持ちなし→拾う、手持ちあり→置く）
+-- 捨てるボタン: 手持ちがあるときのみアクティブ
+local placeBtnLabel = placeBtn:FindFirstChildWhichIsA("TextLabel")
+local dropBtnLabel  = dropBtn:FindFirstChildWhichIsA("TextLabel")
+
+-- ラベルフェードアウト
+local FADE_DELAY   = 3.0   -- 表示してからフェード開始までの秒数
+local FADE_TIME    = 1.5   -- フェードアウトにかける秒数
+local fadeTweenInfo = TweenInfo.new(FADE_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local fadeThreads = {}  -- ラベルごとの delay スレッド
+local fadeTweens  = {}  -- ラベルごとの実行中 Tween
+
+local function fadeLabel(label)
+	if not label then return end
+	-- 既存の delay スレッドをキャンセル
+	if fadeThreads[label] then
+		task.cancel(fadeThreads[label])
+		fadeThreads[label] = nil
+	end
+	-- 実行中の Tween をキャンセル
+	if fadeTweens[label] then
+		fadeTweens[label]:Cancel()
+		fadeTweens[label] = nil
+	end
+	-- 即座に表示状態に戻す
+	label.TextTransparency = 0
+	-- FADE_DELAY 秒後にフェードアウト開始
+	fadeThreads[label] = task.delay(FADE_DELAY, function()
+		local tween = TweenService:Create(label, fadeTweenInfo, { TextTransparency = 1 })
+		fadeTweens[label] = tween
+		tween:Play()
+		tween.Completed:Connect(function()
+			fadeTweens[label] = nil
+		end)
+		fadeThreads[label] = nil
+	end)
+end
+
 local function updateButtonState(holding)
-	local alpha = holding and 0.1 or 0.55
-	placeBtn.BackgroundTransparency = alpha
-	dropBtn.BackgroundTransparency  = alpha
-	placeBtn.Active = holding
-	dropBtn.Active  = holding
+	placeBtn.BackgroundTransparency = 0.1
+	placeBtn.Active = true
+	if placeBtnImage then
+		placeBtnImage.Image = holding and ICON_PLACE or ICON_PICKUP
+	end
+	if placeBtnLabel and isMobile then
+		placeBtnLabel.Text = holding and "置く" or "拾う"
+		if holding then fadeLabel(placeBtnLabel) end
+	end
+
+	-- 捨てるボタン: 手持ち時のみ（アクティブになった瞬間にラベル再表示）
+	dropBtn.BackgroundTransparency = holding and 0.1 or 0.55
+	dropBtn.Active = holding
+	if holding and isMobile then
+		fadeLabel(dropBtnLabel)
+	end
 end
 updateButtonState(false)
+
+-- 起動時: モバイルのみ全ラベルを初期フェードアウト
+if isMobile then
+	fadeLabel(placeBtnLabel)
+	fadeLabel(dropBtnLabel)
+end
 
 -- ボタン押下
 placeBtn.Activated:Connect(function()
 	local actions = _G.PlayerActions
-	if actions then actions.tryPlace() end
+	if actions then actions.tryPlaceOrPickup() end
 end)
 
 dropBtn.Activated:Connect(function()
@@ -325,53 +441,65 @@ end)
 -- 俯瞰中は「通常視点」、通常時は「俯瞰」と表示してトグル。
 ------------------------------------------------------------------------
 
-local CAM_BTN_W = isMobile and 0.22 or 0.14
-local CAM_BTN_H = isMobile and 0.09 or 0.07
+-- カメラボタン（モバイル: 置くボタン真上 / PC: 左下）
+local CAM_BTN_W = 0.14
+local CAM_BTN_H = 0.07
 
 local camBtn = Instance.new("TextButton", screenGui)
-camBtn.Position               = UDim2.fromScale(0.012, 1 - CAM_BTN_H - 0.02)
-camBtn.Size                   = UDim2.fromScale(CAM_BTN_W, CAM_BTN_H)
-camBtn.BackgroundColor3       = Color3.fromRGB(50, 70, 110)
-camBtn.BackgroundTransparency = 0.1
+camBtn.AnchorPoint = isMobile and Vector2.new(1, 1) or Vector2.new(0, 0)
+camBtn.Position = isMobile
+	-- 左列・上段（捨てるボタンの真上、上段シフト適用）
+	and UDim2.new(1, -(M_LEFT_COL - M_UPPER_SHIFT_PX), M_UPPER_Y, 0)
+	or  UDim2.fromScale(0.012, 1 - CAM_BTN_H - 0.02)
+camBtn.Size = isMobile
+	and UDim2.fromOffset(M_PX, M_PX)
+	or  UDim2.fromScale(CAM_BTN_W, CAM_BTN_H)
+-- タイル風スタイル
+camBtn.BackgroundColor3       = C.tileCam
+camBtn.BackgroundTransparency = 0.05
 camBtn.Text                   = ""
 camBtn.BorderSizePixel        = 0
 camBtn.AutoButtonColor        = true
-corner(camBtn, 10)
+corner(camBtn, isMobile and 999 or 12)
 
-local camBtnMain = Instance.new("TextLabel", camBtn)
-camBtnMain.Size                   = UDim2.fromScale(1, 0.6)
-camBtnMain.Position               = UDim2.fromScale(0, 0.08)
-camBtnMain.BackgroundTransparency = 1
-camBtnMain.Text                   = "俯瞰"
-camBtnMain.TextSize               = ts(isMobile and 18 or 16)
-camBtnMain.TextColor3             = Color3.fromRGB(255, 255, 255)
-camBtnMain.Font                   = Enum.Font.GothamBold
-camBtnMain.TextXAlignment         = Enum.TextXAlignment.Center
+-- アイコン画像
+local camBtnIcon = Instance.new("ImageLabel", camBtn)
+camBtnIcon.Size                   = UDim2.fromScale(0.65, 0.65)
+camBtnIcon.Position               = UDim2.fromScale(0.175, 0.04)
+camBtnIcon.BackgroundTransparency = 1
+camBtnIcon.Image                  = ICON_CAM
+camBtnIcon.ImageColor3            = Color3.fromRGB(255, 255, 255)
+camBtnIcon.ScaleType              = Enum.ScaleType.Fit
+camBtnIcon.ZIndex                 = 2
 
-if not isMobile then
-	local camBtnSub = Instance.new("TextLabel", camBtn)
-	camBtnSub.Size                   = UDim2.fromScale(1, 0.35)
-	camBtnSub.Position               = UDim2.fromScale(0, 0.62)
-	camBtnSub.BackgroundTransparency = 1
-	camBtnSub.Text                   = "[ V ]"
-	camBtnSub.TextSize               = ts(10)
-	camBtnSub.TextColor3             = Color3.fromRGB(200, 200, 200)
-	camBtnSub.Font                   = Enum.Font.Gotham
-	camBtnSub.TextXAlignment         = Enum.TextXAlignment.Center
-end
+-- ラベル
+local camBtnSub = Instance.new("TextLabel", camBtn)
+camBtnSub.Size                   = UDim2.fromScale(1, 0.22)
+camBtnSub.Position               = UDim2.fromScale(0, 0.77)
+camBtnSub.BackgroundTransparency = 1
+camBtnSub.Text                   = isMobile and "カメラ" or "[ V ]"
+camBtnSub.TextScaled             = true
+camBtnSub.TextColor3             = Color3.fromRGB(255, 255, 255)
+camBtnSub.Font                   = Enum.Font.GothamBold
+camBtnSub.TextXAlignment         = Enum.TextXAlignment.Center
+camBtnSub.TextStrokeColor3       = Color3.fromRGB(0, 0, 0)
+camBtnSub.TextStrokeTransparency = 0.4
+camBtnSub.ZIndex                 = 3
 
--- 俯瞰状態に応じてボタン表示を更新
+-- 俯瞰状態に応じてボタン表示を更新（俯瞰中は背景をオレンジに変えてアクティブ感を演出）
 local function updateCamButton(overhead)
-	camBtnMain.Text               = overhead and "通常視点" or "俯瞰"
-	camBtn.BackgroundColor3       = overhead
-		and Color3.fromRGB(100, 70, 30)
-		or  Color3.fromRGB(50, 70, 110)
+	camBtn.BackgroundColor3 = overhead
+		and Color3.fromRGB(200, 120, 30)
+		or  C.tileCam
 end
+
+-- カメラボタン初期フェード（モバイルのみ）
+if isMobile then fadeLabel(camBtnSub) end
 
 camBtn.Activated:Connect(function()
 	local ctrl = _G.CameraController
 	if ctrl then ctrl.toggle() end
-	-- 表示更新は RenderStepped 側で自動追従
+	if isMobile then fadeLabel(camBtnSub) end
 end)
 
 -- Vキー操作との同期はペナルティループと共用する RenderStepped 内で行う（後述）
@@ -588,6 +716,18 @@ RE_GameResult.OnClientEvent:Connect(function(results)
 	TweenService:Create(resultScreen, TweenInfo.new(0.5), {
 		BackgroundTransparency = 0.45
 	}):Play()
+end)
+
+-- ゲームフェーズに応じてゲームHUDを表示/非表示
+RE_GameStateChanged.OnClientEvent:Connect(function(phase, _hostId)
+	if phase == "InGame" then
+		screenGui.Enabled = true
+	elseif phase == "Lobby" then
+		-- ロビーに戻るとき結果画面も隠す
+		resultScreen.Visible = false
+		screenGui.Enabled    = true  -- スコア等のUIは残す（ロビー中も使わないが画面を残す）
+	end
+	-- Result フェーズはそのまま（結果画面は RE_GameResult で表示済み）
 end)
 
 print("[HUDController] loaded")
