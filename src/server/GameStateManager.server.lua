@@ -19,9 +19,20 @@ local LOBBY_SPAWN_POS = Vector3.new(-4286, 1864, 1560)  -- ロビーエリアSpa
 ------------------------------------------------------------------------
 
 local serverEventsFolder = ServerScriptService:WaitForChild("ServerEvents")
-local BE_BuildBoard      = serverEventsFolder:WaitForChild("BuildBoard")
-local BE_ResetBoard      = serverEventsFolder:WaitForChild("ResetBoard")
-local BE_ResetBlocks     = serverEventsFolder:WaitForChild("ResetBlocks")
+
+local function getOrCreateBE(name)
+	local r = serverEventsFolder:FindFirstChild(name)
+	if not r then
+		r        = Instance.new("BindableEvent")
+		r.Name   = name
+		r.Parent = serverEventsFolder
+	end
+	return r
+end
+
+local BE_BuildBoard  = getOrCreateBE("BuildBoard")
+local BE_ResetBoard  = getOrCreateBE("ResetBoard")
+local BE_ResetBlocks = getOrCreateBE("ResetBlocks")
 
 local remoteFolder = ReplicatedStorage:WaitForChild("RemoteEvents")
 
@@ -135,7 +146,7 @@ end
 -- ScoreManager のゲームクリア通知を受けて Result フェーズへ
 ------------------------------------------------------------------------
 
-local BE_GameWon = serverEventsFolder:WaitForChild("GameWon")
+local BE_GameWon = getOrCreateBE("GameWon")
 BE_GameWon.Event:Connect(function()
 	task.wait(1)  -- 結果画面表示のための待機
 	endGame()
