@@ -185,10 +185,13 @@ local function resetToLobby()
 	end
 	print("[GameStateManager] Resetting to Lobby")
 
+	-- 盤面削除前に全員をロビーへワープ（盤面消滅による落下死を防ぐ）
+	warpAll(LOBBY_SPAWN_POS)
+	task.wait(0.5)
+
 	BE_ResetBoard:Fire()
 	BE_ResetBlocks:Fire()
-	task.wait(0.5)
-	warpAll(LOBBY_SPAWN_POS)
+
 	broadcastState()
 end
 

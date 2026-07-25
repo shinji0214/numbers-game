@@ -723,11 +723,15 @@ RE_GameStateChanged.OnClientEvent:Connect(function(phase, _hostId)
 	if phase == "InGame" then
 		screenGui.Enabled = true
 	elseif phase == "Lobby" then
-		-- ロビーに戻るとき結果画面も隠す
-		resultScreen.Visible = false
-		screenGui.Enabled    = true  -- スコア等のUIは残す（ロビー中も使わないが画面を残す）
+		-- 結果画面・コンボ・ペナルティを非表示にしてスコア表示をリセット
+		resultScreen.Visible  = false
+		comboPanel.Visible    = false
+		penaltyPanel.Visible  = false
+		scoreValueLabel.Text  = "0"
+		comboValueLabel.Text  = "×1.0"
+		remainLabel.Text      = "残り -- マス"
+		screenGui.Enabled     = true
 	end
-	-- Result フェーズはそのまま（結果画面は RE_GameResult で表示済み）
 end)
 
 print("[HUDController] loaded")
