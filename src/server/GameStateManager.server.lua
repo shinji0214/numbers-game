@@ -1,21 +1,24 @@
 -- GameStateManager
--- ゲーム状態機械・ホスト管理・プレイヤーワープ
+-- ゲーム状態機械・看板スポーン・カウントダウン管理
 --   状態: Lobby → InGame → Result → Lobby ...
---   ホスト: 最初に参加したプレイヤー。退出時は次のプレイヤーに引き継ぎ
+--   ホスト: 開始ボタンを押したプレイヤー（入室順ではない）
 
 local Players             = game:GetService("Players")
 local ReplicatedStorage   = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
 
 ------------------------------------------------------------------------
--- ワープ先座標
+-- 座標定数
 ------------------------------------------------------------------------
 
-local GAME_SPAWN_POS  = Vector3.new(-4286, 1864, 1760)  -- ゲームエリアSpawn
-local LOBBY_SPAWN_POS = Vector3.new(-4286, 1864, 1560)  -- ロビーエリアSpawn（要Studio調整）
+local GAME_SPAWN_POS  = Vector3.new(-4286, 1864, 1760)
+local LOBBY_SPAWN_POS = Vector3.new(-4286, 1864, 1560)  -- 要Studio調整
+local SIGN_POS        = Vector3.new(-4286, 1864, 1600)  -- 看板位置（要Studio調整）
+
+local COUNTDOWN_SEC = 10
 
 ------------------------------------------------------------------------
--- ServerEvents / RemoteEvents
+-- ServerEvents
 ------------------------------------------------------------------------
 
 local serverEventsFolder = ServerScriptService:WaitForChild("ServerEvents")
@@ -33,52 +36,51 @@ end
 local BE_BuildBoard  = getOrCreateBE("BuildBoard")
 local BE_ResetBoard  = getOrCreateBE("ResetBoard")
 local BE_ResetBlocks = getOrCreateBE("ResetBlocks")
+local BE_GameWon     = getOrCreateBE("GameWon")
+
+------------------------------------------------------------------------
+-- RemoteEvents
+------------------------------------------------------------------------
 
 local remoteFolder = ReplicatedStorage:WaitForChild("RemoteEvents")
 
-local function getOrCreate(name, class)
+local function getOrCreateRE(name)
 	local r = remoteFolder:FindFirstChild(name)
 	if not r then
-		r        = Instance.new(class)
+		r        = Instance.new("RemoteEvent")
 		r.Name   = name
 		r.Parent = remoteFolder
 	end
 	return r
 end
 
-local RE_GameStateChanged = getOrCreate("GameStateChanged", "RemoteEvent") -- S→C: 状態通知
-local RE_RequestStart     = getOrCreate("RequestStart",     "RemoteEvent") -- C→S: ホストがゲーム開始を要求
-local RE_PlayAgain        = getOrCreate("PlayAgain",        "RemoteEvent") -- C→S: ホストが次ゲームを回答
+local RE_GameStateChanged  = getOrCreateRE("GameStateChanged")   -- S→C: フェーズ通知
+local RE_ConfigResult      = getOrCreateRE("ConfigResult")       -- S→C: 設定UI開閉結果
+local RE_OpenConfig        = getOrCreateRE("OpenConfig")         -- C→S: 設定UI開放要求
+local RE_CloseConfig       = getOrCreateRE("CloseConfig")        -- C→S: 設定UI閉鎖
+local RE_RequestStart      = getOrCreateRE("RequestStart")       -- C→S: ゲーム開始要求
+local RE_CountdownUpdate   = getOrCreateRE("CountdownUpdate")    -- S→C: カウントダウン通知
+local RE_CancelCountdown   = getOrCreateRE("CancelCountdown")    -- C→S: カウントダウンキャンセル
+local RE_PlayAgain         = getOrCreateRE("PlayAgain")          -- C→S: 次ゲーム回答
 
 ------------------------------------------------------------------------
 -- 状態
 ------------------------------------------------------------------------
 
-local gamePhase  = "Lobby"  -- "Lobby" | "InGame" | "Result"
-local hostUserId = nil
-local difficulty = "Normal"
+local gamePhase         = "Lobby"
+local hostUserId        = nil
+local difficulty        = "Normal"
+local isConfiguring     = false   -- 設定UIを開いているプレイヤーがいるか
+local configuringUserId = nil     -- 設定UIを開いているプレイヤーのUserId
+local countdownThread   = nil     -- カウントダウンスレッド
 
 ------------------------------------------------------------------------
--- ホスト管理
+-- ユーティリティ
 ------------------------------------------------------------------------
-
-local function assignHost()
-	local players = Players:GetPlayers()
-	if #players == 0 then
-		hostUserId = nil
-		return
-	end
-	hostUserId = players[1].UserId
-	print(string.format("[GameStateManager] Host assigned: %s", players[1].Name))
-end
 
 local function broadcastState()
 	RE_GameStateChanged:FireAllClients(gamePhase, hostUserId)
 end
-
-------------------------------------------------------------------------
--- プレイヤーワープ
-------------------------------------------------------------------------
 
 local function warpPlayer(player, pos)
 	local char = player.Character
@@ -89,30 +91,77 @@ local function warpPlayer(player, pos)
 end
 
 local function warpAll(pos)
-	for _, player in ipairs(Players:GetPlayers()) do
-		warpPlayer(player, pos)
+	for _, p in ipairs(Players:GetPlayers()) do
+		warpPlayer(p, pos)
 	end
+end
+
+------------------------------------------------------------------------
+-- 設定UI排他制御
+------------------------------------------------------------------------
+
+local function tryOpenConfig(player)
+	if gamePhase ~= "Lobby" then
+		RE_ConfigResult:FireClient(player, false, "ゲームが進行中です")
+		return
+	end
+	if isConfiguring then
+		RE_ConfigResult:FireClient(player, false, "他のプレイヤーが設定中です")
+		return
+	end
+	isConfiguring     = true
+	configuringUserId = player.UserId
+	RE_ConfigResult:FireClient(player, true, difficulty)
+	print(string.format("[GameStateManager] Config opened by: %s", player.Name))
+end
+
+local function releaseConfig()
+	isConfiguring     = false
+	configuringUserId = nil
+end
+
+------------------------------------------------------------------------
+-- カウントダウン
+------------------------------------------------------------------------
+
+local function cancelCountdown()
+	if countdownThread then
+		task.cancel(countdownThread)
+		countdownThread = nil
+	end
+	hostUserId = nil
+	releaseConfig()
+	RE_CountdownUpdate:FireAllClients(nil)  -- nil = キャンセル通知
+	print("[GameStateManager] Countdown cancelled")
+end
+
+local function startCountdown(diff)
+	difficulty  = diff or difficulty
+	hostUserId  = configuringUserId
+	releaseConfig()
+
+	print(string.format("[GameStateManager] Countdown started by %d. Difficulty=%s", hostUserId, difficulty))
+
+	countdownThread = task.spawn(function()
+		for i = COUNTDOWN_SEC, 0, -1 do
+			RE_CountdownUpdate:FireAllClients(i)
+			if i > 0 then
+				task.wait(1)
+			end
+		end
+		countdownThread = nil
+		-- カウントダウン終了 → ゲーム開始
+		gamePhase = "InGame"
+		warpAll(GAME_SPAWN_POS)
+		BE_BuildBoard:Fire(difficulty)
+		broadcastState()
+		print(string.format("[GameStateManager] Game started. Difficulty=%s", difficulty))
+	end)
 end
 
 ------------------------------------------------------------------------
 -- 状態遷移
 ------------------------------------------------------------------------
-
-local function startGame(diff)
-	if gamePhase ~= "Lobby" then return end
-	difficulty = diff or difficulty
-	gamePhase  = "InGame"
-
-	print(string.format("[GameStateManager] Starting game. Difficulty=%s", difficulty))
-
-	-- 全員ゲームエリアにワープ
-	warpAll(GAME_SPAWN_POS)
-
-	-- 盤面・ブロック生成
-	BE_BuildBoard:Fire(difficulty)
-
-	broadcastState()
-end
 
 local function endGame()
 	if gamePhase ~= "InGame" then return end
@@ -120,7 +169,6 @@ local function endGame()
 	print("[GameStateManager] Game ended → Result phase")
 	broadcastState()
 
-	-- ホストに次ゲームの確認を送る（クライアント側UIが受け取る）
 	local host = Players:GetPlayerByUserId(hostUserId)
 	if host then
 		RE_GameStateChanged:FireClient(host, "Result_HostPrompt", hostUserId)
@@ -128,55 +176,73 @@ local function endGame()
 end
 
 local function resetToLobby()
-	gamePhase = "Lobby"
+	gamePhase  = "Lobby"
+	hostUserId = nil
+	releaseConfig()
+	if countdownThread then
+		task.cancel(countdownThread)
+		countdownThread = nil
+	end
 	print("[GameStateManager] Resetting to Lobby")
 
-	-- 盤面・ブロック削除
 	BE_ResetBoard:Fire()
 	BE_ResetBlocks:Fire()
-
-	-- 全員ロビーにワープ
-	task.wait(0.5)  -- リセット処理が完了するまで少し待つ
+	task.wait(0.5)
 	warpAll(LOBBY_SPAWN_POS)
-
 	broadcastState()
 end
 
 ------------------------------------------------------------------------
--- ScoreManager のゲームクリア通知を受けて Result フェーズへ
+-- クライアントイベント受信
 ------------------------------------------------------------------------
 
-local BE_GameWon = getOrCreateBE("GameWon")
-BE_GameWon.Event:Connect(function()
-	task.wait(1)  -- 結果画面表示のための待機
-	endGame()
+-- ハンバーガーメニューから設定UI開放を要求
+RE_OpenConfig.OnServerEvent:Connect(function(player)
+	tryOpenConfig(player)
 end)
 
-------------------------------------------------------------------------
--- クライアントからのイベント受信
-------------------------------------------------------------------------
+-- 設定UIを閉じる
+RE_CloseConfig.OnServerEvent:Connect(function(player)
+	if player.UserId ~= configuringUserId then return end
+	releaseConfig()
+	print(string.format("[GameStateManager] Config closed by: %s", player.Name))
+end)
 
--- ホストがゲーム開始を要求
+-- 開始ボタン押下 → カウントダウン開始
 RE_RequestStart.OnServerEvent:Connect(function(player, requestedDifficulty)
-	if player.UserId ~= hostUserId then return end
+	if player.UserId ~= configuringUserId then return end
 	if gamePhase ~= "Lobby" then return end
-	startGame(requestedDifficulty)
+	startCountdown(requestedDifficulty)
 end)
 
--- ホストが次ゲームを回答
+-- カウントダウンキャンセル（ホストのみ）
+RE_CancelCountdown.OnServerEvent:Connect(function(player)
+	if player.UserId ~= hostUserId then return end
+	if countdownThread == nil then return end
+	cancelCountdown()
+end)
+
+-- 次ゲーム回答（ホストのみ）
 RE_PlayAgain.OnServerEvent:Connect(function(player, answer)
 	if player.UserId ~= hostUserId then return end
 	if gamePhase ~= "Result" then return end
 
 	if answer == true then
-		-- リセットしてそのままゲーム開始
 		resetToLobby()
 		task.wait(1)
-		startGame(difficulty)
+		-- ロビーに戻った後、看板から再度開始する設計のため自動開始はしない
 	else
-		-- ロビーに戻る
 		resetToLobby()
 	end
+end)
+
+------------------------------------------------------------------------
+-- ゲームクリア通知
+------------------------------------------------------------------------
+
+BE_GameWon.Event:Connect(function()
+	task.wait(1)
+	endGame()
 end)
 
 ------------------------------------------------------------------------
@@ -184,46 +250,84 @@ end)
 ------------------------------------------------------------------------
 
 Players.PlayerAdded:Connect(function(player)
-	-- ホスト未設定なら設定
-	if hostUserId == nil then
-		hostUserId = player.UserId
-		print(string.format("[GameStateManager] Host assigned: %s", player.Name))
-	end
-
-	-- ゲーム中に参加した場合はゲームエリアにワープ
 	if gamePhase == "InGame" then
-		task.wait(2)  -- キャラクターのロードを待つ
+		task.wait(2)
 		warpPlayer(player, GAME_SPAWN_POS)
 	end
-
 	broadcastState()
 end)
 
 Players.PlayerRemoving:Connect(function(player)
-	if player.UserId ~= hostUserId then return end
+	-- 設定UI開放中に退出したらロックを解放
+	if player.UserId == configuringUserId then
+		releaseConfig()
+	end
 
-	-- ホストが退出したら次のプレイヤーに引き継ぎ
-	local players = Players:GetPlayers()
-	local next    = nil
-	for _, p in ipairs(players) do
-		if p.UserId ~= player.UserId then
-			next = p
-			break
+	-- カウントダウン中またはResult中にホストが退出したらリセット
+	if player.UserId == hostUserId then
+		if countdownThread then
+			cancelCountdown()
+		elseif gamePhase == "Result" then
+			resetToLobby()
+		else
+			hostUserId = nil
+			broadcastState()
 		end
 	end
-
-	hostUserId = next and next.UserId or nil
-	if next then
-		print(string.format("[GameStateManager] Host transferred to: %s", next.Name))
-	end
-	broadcastState()
 end)
 
 ------------------------------------------------------------------------
--- 初期状態をロビーとして通知
+-- 看板スポーン
 ------------------------------------------------------------------------
 
-task.wait(1)  -- 他のスクリプトの起動を待つ
+local function spawnSign()
+	local sign = Instance.new("Part")
+	sign.Name      = "LobbySign"
+	sign.Size      = Vector3.new(8, 4, 0.5)
+	sign.CFrame    = CFrame.new(SIGN_POS + Vector3.new(0, 2, 0))
+	sign.Anchored  = true
+	sign.CanCollide = false
+	sign.BrickColor = BrickColor.new("Sand green")
+	sign.Material   = Enum.Material.SmoothPlastic
+	sign.Parent     = workspace
+
+	-- 看板上部に浮かぶテキスト
+	local billboard = Instance.new("BillboardGui", sign)
+	billboard.Size            = UDim2.fromOffset(300, 80)
+	billboard.StudsOffset     = Vector3.new(0, 3.5, 0)
+	billboard.AlwaysOnTop     = false
+	billboard.ResetOnSpawn    = false
+
+	local label = Instance.new("TextLabel", billboard)
+	label.Size                   = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.Text                   = "▶  スタートはこちら"
+	label.TextScaled             = true
+	label.TextColor3             = Color3.fromRGB(255, 240, 100)
+	label.Font                   = Enum.Font.GothamBold
+	label.TextStrokeTransparency = 0.4
+
+	-- ProximityPrompt
+	local prompt = Instance.new("ProximityPrompt", sign)
+	prompt.ObjectText    = "ゲーム設定"
+	prompt.ActionText    = "開く"
+	prompt.KeyboardKeyCode = Enum.KeyCode.E
+	prompt.MaxActivationDistance = 12
+	prompt.HoldDuration  = 0
+
+	prompt.Triggered:Connect(function(player)
+		tryOpenConfig(player)
+	end)
+
+	print("[GameStateManager] Lobby sign spawned")
+end
+
+------------------------------------------------------------------------
+-- 初期化
+------------------------------------------------------------------------
+
+task.wait(1)
+spawnSign()
 broadcastState()
 
 print("[GameStateManager] loaded – phase=Lobby")
