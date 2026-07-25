@@ -63,6 +63,7 @@ end
 
 -- 難易度に応じた空きマス数
 local BLANK_COUNT = {
+	Debug  = 3,  -- デバッグ用：空きマス3つのみ
 	Easy   = 32,
 	Normal = 45,
 	Hard   = 55, -- Hard(変形盤面)は別途対応予定

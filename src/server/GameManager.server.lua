@@ -44,6 +44,12 @@ local PLACE_COOLDOWN  = 3
 local BLOCK_EXTRA     = 1   -- 各数字につき余裕で追加するブロック数
 
 ------------------------------------------------------------------------
+-- デバッグフラグ
+-- true にすると難易度が強制的に "Debug"（空きマス3つ）になる
+------------------------------------------------------------------------
+local DEBUG_MODE = false
+
+------------------------------------------------------------------------
 -- ① ServerEvents（BindableEvent/Function）の作成
 --    BlockManager が WaitForChild で待ち受ける
 ------------------------------------------------------------------------
@@ -311,7 +317,11 @@ local function buildBoard(difficulty)
 	boardFolder.Name   = "Board"
 	boardFolder.Parent = workspace
 
-	local data = SudokuModule.generate(difficulty)
+	local effectiveDifficulty = DEBUG_MODE and "Debug" or difficulty
+	if DEBUG_MODE then
+		print("[GameManager] DEBUG_MODE: difficulty overridden to 'Debug'")
+	end
+	local data = SudokuModule.generate(effectiveDifficulty)
 	gameState.puzzle         = data.puzzle
 	gameState.solution       = data.solution
 	gameState.current        = copy9x9(data.puzzle)
