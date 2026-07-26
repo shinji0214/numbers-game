@@ -107,6 +107,7 @@ local gameState = {
 	locked         = nil,
 	cells          = nil,
 	remainingCells = 0,
+	boardType      = "Normal",
 }
 
 local playerState = {}
@@ -130,10 +131,11 @@ end
 ------------------------------------------------------------------------
 
 local function cellPosition(row, col)
+	local center = (gameState.boardType == "Hard") and 6.5 or 5.0
 	return Vector3.new(
-		BOARD_CENTER_X + (col - 5) * CELL_SIZE,
+		BOARD_CENTER_X + (col - center) * CELL_SIZE,
 		BOARD_Y,
-		BOARD_CENTER_Z - (row - 5) * CELL_SIZE
+		BOARD_CENTER_Z - (row - center) * CELL_SIZE
 	)
 end
 
@@ -143,11 +145,18 @@ local function blockColor(row, col)
 	return (br + bc) % 2 == 0 and COLOR.blockA or COLOR.blockB
 end
 
-local function copy9x9(src)
+-- Hardモード: (r,c) が有効セルかどうか（Grid A または Grid B に属するか）
+local function isHardCell(r, c)
+	return (r <= 9 and c <= 9) or (r >= 4 and c >= 4 and r <= 12 and c <= 12)
+end
+
+local function copyBoard(src, dim)
 	local dst = {}
-	for i = 1, 9 do
+	for i = 1, dim do
 		dst[i] = {}
-		for j = 1, 9 do dst[i][j] = src[i][j] end
+		for j = 1, dim do
+			dst[i][j] = (src[i] and src[i][j]) or 0
+		end
 	end
 	return dst
 end
@@ -157,13 +166,15 @@ end
 ------------------------------------------------------------------------
 
 local function calcBlockList(puzzle, solution)
-	-- 各数字（1〜9）が何個必要かを数える
 	local counts = {}
 	for n = 1, 9 do counts[n] = 0 end
 
-	for i = 1, 9 do
-		for j = 1, 9 do
-			if puzzle[i][j] == 0 then
+	local maxDim = (gameState.boardType == "Hard") and 12 or 9
+
+	for i = 1, maxDim do
+		for j = 1, maxDim do
+			local valid = gameState.boardType ~= "Hard" or isHardCell(i, j)
+			if valid and puzzle[i][j] == 0 then
 				local ans = solution[i][j]
 				counts[ans] = counts[ans] + 1
 			end
@@ -309,6 +320,76 @@ local function createFrame(boardFolder)
 	end
 end
 
+-- Hard モード用ディバイダー（Grid A + Grid B それぞれの 3×3 区切り線）
+local function createHardDividers(boardFolder)
+	local span   = CELL_SIZE * 9
+	-- Hard 盤面の中心オフセット: Grid A 中心 = 結合(5.0,5.0)、Grid B 中心 = 結合(8.0,8.0)
+	local gACX = BOARD_CENTER_X + (5.0 - 6.5) * CELL_SIZE
+	local gACZ = BOARD_CENTER_Z - (5.0 - 6.5) * CELL_SIZE
+	local gBCX = BOARD_CENTER_X + (8.0 - 6.5) * CELL_SIZE
+	local gBCZ = BOARD_CENTER_Z - (8.0 - 6.5) * CELL_SIZE
+
+	local function addDivider(size, pos)
+		local part = Instance.new("Part")
+		part.Size = size; part.Position = pos
+		part.Anchored = true; part.CanCollide = false
+		part.Color = COLOR.divider; part.Material = Enum.Material.SmoothPlastic
+		part.TopSurface = Enum.SurfaceType.Smooth
+		part.BottomSurface = Enum.SurfaceType.Smooth
+		part.CastShadow = false; part.Parent = boardFolder
+	end
+
+	-- Grid A: 区切り線は結合座標 3.5 と 6.5 の位置
+	for _, frac in ipairs({3.5, 6.5}) do
+		local xPos = BOARD_CENTER_X + (frac - 6.5) * CELL_SIZE
+		local zPos = BOARD_CENTER_Z - (frac - 6.5) * CELL_SIZE
+		addDivider(Vector3.new(0.25, CELL_HEIGHT + 0.2, span), Vector3.new(xPos, BOARD_Y + 0.1, gACZ))
+		addDivider(Vector3.new(span, CELL_HEIGHT + 0.2, 0.25), Vector3.new(gACX, BOARD_Y + 0.1, zPos))
+	end
+	-- Grid B: 区切り線は結合座標 6.5 と 9.5 の位置
+	for _, frac in ipairs({6.5, 9.5}) do
+		local xPos = BOARD_CENTER_X + (frac - 6.5) * CELL_SIZE
+		local zPos = BOARD_CENTER_Z - (frac - 6.5) * CELL_SIZE
+		addDivider(Vector3.new(0.25, CELL_HEIGHT + 0.2, span), Vector3.new(xPos, BOARD_Y + 0.1, gBCZ))
+		addDivider(Vector3.new(span, CELL_HEIGHT + 0.2, 0.25), Vector3.new(gBCX, BOARD_Y + 0.1, zPos))
+	end
+end
+
+-- Hard モード用フレーム（Grid A と Grid B それぞれに枠を描画）
+local function createHardFrames(boardFolder)
+	local span   = CELL_SIZE * 9
+	local thick  = 0.5
+	local height = CELL_HEIGHT + 0.3
+	local yPos   = BOARD_Y + 0.1
+	local offset = span / 2 + thick / 2
+
+	local gACX = BOARD_CENTER_X + (5.0 - 6.5) * CELL_SIZE
+	local gACZ = BOARD_CENTER_Z - (5.0 - 6.5) * CELL_SIZE
+	local gBCX = BOARD_CENTER_X + (8.0 - 6.5) * CELL_SIZE
+	local gBCZ = BOARD_CENTER_Z - (8.0 - 6.5) * CELL_SIZE
+
+	local function addEdges(cx, cz)
+		local edges = {
+			{Vector3.new(span + thick*2, height, thick), Vector3.new(cx, yPos, cz - offset)},
+			{Vector3.new(span + thick*2, height, thick), Vector3.new(cx, yPos, cz + offset)},
+			{Vector3.new(thick, height, span),            Vector3.new(cx - offset, yPos, cz)},
+			{Vector3.new(thick, height, span),            Vector3.new(cx + offset, yPos, cz)},
+		}
+		for _, e in ipairs(edges) do
+			local part = Instance.new("Part")
+			part.Size = e[1]; part.Position = e[2]
+			part.Anchored = true; part.CanCollide = true
+			part.Color = COLOR.frame; part.Material = Enum.Material.SmoothPlastic
+			part.TopSurface = Enum.SurfaceType.Smooth
+			part.BottomSurface = Enum.SurfaceType.Smooth
+			part.CastShadow = false; part.Parent = boardFolder
+		end
+	end
+
+	addEdges(gACX, gACZ)
+	addEdges(gBCX, gBCZ)
+end
+
 -- 盤面全体を生成
 local function buildBoard(difficulty)
 	local existing = workspace:FindFirstChild("Board")
@@ -323,46 +404,60 @@ local function buildBoard(difficulty)
 		print("[GameManager] DEBUG_MODE: difficulty overridden to 'Debug'")
 	end
 	local data = SudokuModule.generate(effectiveDifficulty)
+	gameState.boardType      = data.boardType or "Normal"
 	gameState.puzzle         = data.puzzle
 	gameState.solution       = data.solution
-	gameState.current        = copy9x9(data.puzzle)
 	gameState.locked         = {}
 	gameState.cells          = {}
 	gameState.remainingCells = 0
 
-	for i = 1, 9 do
+	local maxDim = (gameState.boardType == "Hard") and 12 or 9
+	gameState.current = copyBoard(data.puzzle, maxDim)
+
+	for i = 1, maxDim do
 		gameState.locked[i] = {}
 		gameState.cells[i]  = {}
-		for j = 1, 9 do
-			local isPrefilled = data.puzzle[i][j] ~= 0
-			gameState.locked[i][j] = isPrefilled
-			if not isPrefilled then
-				gameState.remainingCells += 1
+		for j = 1, maxDim do
+			local valid = gameState.boardType ~= "Hard" or isHardCell(i, j)
+			if valid then
+				local isPrefilled = data.puzzle[i][j] ~= 0
+				gameState.locked[i][j] = isPrefilled
+				if not isPrefilled then
+					gameState.remainingCells += 1
+				end
 			end
 		end
 	end
 
-	for i = 1, 9 do
-		for j = 1, 9 do
-			local val         = data.puzzle[i][j]
-			local isPrefilled = val ~= 0
-			local cell        = createCell(i, j, boardFolder, isPrefilled)
-			gameState.cells[i][j] = cell
-			if isPrefilled then setCellVisual(cell, val, "prefilled") end
+	for i = 1, maxDim do
+		for j = 1, maxDim do
+			local valid = gameState.boardType ~= "Hard" or isHardCell(i, j)
+			if valid then
+				local val         = data.puzzle[i][j]
+				local isPrefilled = val ~= 0
+				local cell        = createCell(i, j, boardFolder, isPrefilled)
+				gameState.cells[i][j] = cell
+				if isPrefilled then setCellVisual(cell, val, "prefilled") end
+			end
 		end
 	end
 
-	createDividers(boardFolder)
-	createFrame(boardFolder)
+	if gameState.boardType == "Hard" then
+		createHardDividers(boardFolder)
+		createHardFrames(boardFolder)
+	else
+		createDividers(boardFolder)
+		createFrame(boardFolder)
+	end
 
-	print(string.format("[GameManager] Board built. Difficulty=%s  EmptyCells=%d",
-		difficulty, gameState.remainingCells))
+	print(string.format("[GameManager] Board built. Difficulty=%s  BoardType=%s  EmptyCells=%d",
+		effectiveDifficulty, gameState.boardType, gameState.remainingCells))
 
 	-- ③ ブロックリスト計算 → BlockManager にスポーン指示
 	local blockList = calcBlockList(data.puzzle, data.solution)
-	BE_SpawnBlocks:Fire(blockList)
+	BE_SpawnBlocks:Fire(blockList, gameState.boardType)
 
-	RE_BoardReady:FireAllClients(difficulty, gameState.remainingCells)
+	RE_BoardReady:FireAllClients(difficulty, gameState.remainingCells, gameState.boardType)
 	return boardFolder
 end
 
@@ -430,7 +525,9 @@ local lastPlaceTime = {}
 local function handlePlaceBlock(player, row, col, num)
 	-- 型チェック
 	if type(row) ~= "number" or type(col) ~= "number" or type(num) ~= "number" then return end
-	if row < 1 or row > 9 or col < 1 or col > 9 then return end
+	local maxDim = (gameState.boardType == "Hard") and 12 or 9
+	if row < 1 or row > maxDim or col < 1 or col > maxDim then return end
+	if gameState.boardType == "Hard" and not isHardCell(row, col) then return end
 	if num < 1 or num > 9 then return end
 
 	local userId = player.UserId
@@ -528,6 +625,7 @@ local function resetBoard()
 	gameState.locked         = nil
 	gameState.cells          = nil
 	gameState.remainingCells = 0
+	gameState.boardType      = "Normal"
 	playerState              = {}
 	lastPlaceTime            = {}
 end

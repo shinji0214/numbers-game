@@ -63,10 +63,10 @@ end
 
 -- 難易度に応じた空きマス数
 local BLANK_COUNT = {
-	Debug  = 3,  -- デバッグ用：空きマス3つのみ
+	Debug  = 3,   -- デバッグ用：空きマス3つのみ
 	Easy   = 32,
 	Normal = 45,
-	Hard   = 55, -- Hard(変形盤面)は別途対応予定
+	Hard   = 90,  -- Hardは12×12サムライ盤面（有効セル126個）
 }
 
 -- 完成盤面から指定数のマスを空にしてパズルを作る
@@ -94,10 +94,84 @@ local function createPuzzle(solvedBoard, blankCount)
 	return puzzle
 end
 
+-- Hardモード（サムライ数独）生成
+-- Grid A (9×9) + Grid B (9×9) が重なる12×12複合盤面
+-- 重複ゾーン: 結合盤面の rows 4-9, cols 4-9 (Grid A の右下 / Grid B の左上)
+local function generateHard()
+	math.randomseed(tick())
+
+	for _ = 1, 100 do
+		-- Grid A を完全解決
+		local gridA = createEmptyBoard()
+		solveSudoku(gridA)
+
+		-- Grid B の重複部分を Grid A から複写（Grid A rows 4-9, cols 4-9 → Grid B rows 1-6, cols 1-6）
+		local gridB = createEmptyBoard()
+		for r = 1, 6 do
+			for c = 1, 6 do
+				gridB[r][c] = gridA[r + 3][c + 3]
+			end
+		end
+
+		-- Grid B を重複制約付きでバックトラッキング解決
+		if solveSudoku(gridB) then
+			-- 12×12 結合盤面を組み立てる（無効マスは 0 のまま）
+			local solution = {}
+			for r = 1, 12 do
+				solution[r] = {}
+				for c = 1, 12 do solution[r][c] = 0 end
+			end
+			for r = 1, 9 do
+				for c = 1, 9 do solution[r][c]         = gridA[r][c] end
+			end
+			for r = 1, 9 do
+				for c = 1, 9 do solution[r + 3][c + 3] = gridB[r][c] end
+			end
+
+			-- 有効マスリストを収集してシャッフル
+			local validCells = {}
+			for r = 1, 12 do
+				for c = 1, 12 do
+					if solution[r][c] ~= 0 then
+						table.insert(validCells, {r, c})
+					end
+				end
+			end
+			for k = #validCells, 2, -1 do
+				local rnd = math.random(k)
+				validCells[k], validCells[rnd] = validCells[rnd], validCells[k]
+			end
+
+			-- solution を deep copy してパズルを作成
+			local puzzle = {}
+			for r = 1, 12 do
+				puzzle[r] = {}
+				for c = 1, 12 do puzzle[r][c] = solution[r][c] end
+			end
+			for i = 1, math.min(BLANK_COUNT.Hard, #validCells) do
+				local pos = validCells[i]
+				puzzle[pos[1]][pos[2]] = 0
+			end
+
+			return { puzzle = puzzle, solution = solution, boardType = "Hard" }
+		end
+	end
+
+	-- フォールバック（ほぼ到達しない）
+	warn("[SudokuModule] generateHard: failed after 100 attempts, falling back to Normal")
+	local board = createEmptyBoard()
+	solveSudoku(board)
+	return { puzzle = createPuzzle(board, BLANK_COUNT.Normal), solution = board, boardType = "Normal" }
+end
+
 -- 外部公開：パズル生成
--- difficulty = "Easy" | "Normal" | "Hard"
--- 戻り値: { puzzle = 盤面(0が空きマス), solution = 正解盤面 }
+-- difficulty = "Debug" | "Easy" | "Normal" | "Hard"
+-- 戻り値: { puzzle, solution, boardType }
 function SudokuModule.generate(difficulty)
+	if difficulty == "Hard" then
+		return generateHard()
+	end
+
 	math.randomseed(tick())
 	local board = createEmptyBoard()
 	solveSudoku(board)
@@ -106,8 +180,9 @@ function SudokuModule.generate(difficulty)
 	local puzzle = createPuzzle(board, blankCount)
 
 	return {
-		puzzle   = puzzle,   -- プレイヤーに見せる盤面（0=空き）
-		solution = board,    -- 正解盤面（サーバーのみ保持）
+		puzzle    = puzzle,
+		solution  = board,
+		boardType = "Normal",
 	}
 end
 

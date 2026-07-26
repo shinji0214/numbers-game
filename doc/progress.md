@@ -102,5 +102,5 @@
 | デバッグモード（DEBUG_MODE）の本番前無効化 | 高 | GameManager.server.lua:50 を false に戻す |
 | CPU プレイヤー | 低 | spec.md 9.4 参照 |
 | コレクション図鑑 | 低 | pending.md 参照 |
-| Hard モード（変形盤面） | 中 | 9×9 二重盤面。pending.md 参照 |
+| Hard モード（変形盤面） | ✅ | サムライ数独（12×12 複合盤面）。SudokuModule / GameManager / BlockManager / EffectController 対応済み |
 | バッジ付与 | 低 | Roblox Badge API 利用 |

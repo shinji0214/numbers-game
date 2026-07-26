@@ -12,6 +12,7 @@ local Players             = game:GetService("Players")
 local BLOCK_SIZE      = 2.5
 local BLOCK_HEIGHT    = 1.2
 local BLOCK_Y         = 1863.0  -- Map 1 床面 Y≈1862 + ブロック半高さ
+local CELL_SIZE       = 10      -- GameManager と同値（Hard モードのスパン計算に使用）
 local BOARD_SPAN      = 90
 local EDGE_OFFSET     = 20
 local BLOCK_SPACING   = 6
@@ -203,8 +204,9 @@ end
 -- スポーン座標生成（四辺ランダム配置）
 ------------------------------------------------------------------------
 
-local function generateSpawnPositions(blockList)
-	local half  = BOARD_SPAN / 2 + EDGE_OFFSET
+local function generateSpawnPositions(blockList, boardType)
+	local span  = (boardType == "Hard") and (CELL_SIZE * 12) or BOARD_SPAN
+	local half  = span / 2 + EDGE_OFFSET
 	local sides = {
 		function(t) return Vector3.new(BOARD_CENTER_X + t,    BLOCK_Y, BOARD_CENTER_Z + half)  end,
 		function(t) return Vector3.new(BOARD_CENTER_X + t,    BLOCK_Y, BOARD_CENTER_Z - half)  end,
@@ -240,12 +242,12 @@ end
 -- ブロックをスポーン
 ------------------------------------------------------------------------
 
-local function spawnBlocks(blockList)
+local function spawnBlocks(blockList, boardType)
 	blockFolder:ClearAllChildren()
 	spawnPoints = {}
 	heldBlocks  = {}
 
-	local spawnData = generateSpawnPositions(blockList)
+	local spawnData = generateSpawnPositions(blockList, boardType)
 	for _, data in ipairs(spawnData) do
 		local part = createBlockPart(data.num, data.pos)
 		spawnPoints[part] = part.CFrame
@@ -253,7 +255,9 @@ local function spawnBlocks(blockList)
 	print(string.format("[BlockManager] Spawned %d blocks", #spawnData))
 end
 
-BE_SpawnBlocks.Event:Connect(spawnBlocks)
+BE_SpawnBlocks.Event:Connect(function(blockList, boardType)
+	spawnBlocks(blockList, boardType)
+end)
 
 ------------------------------------------------------------------------
 -- リスポーン
