@@ -47,7 +47,7 @@ local BLOCK_EXTRA     = 1   -- 各数字につき余裕で追加するブロッ�
 -- デバッグフラグ
 -- true にすると難易度が強制的に "Debug"（空きマス3つ）になる
 ------------------------------------------------------------------------
-local DEBUG_MODE = false
+local DEBUG_MODE = true
 
 ------------------------------------------------------------------------
 -- ① ServerEvents（BindableEvent/Function）の作成
@@ -94,6 +94,7 @@ local RE_BoardReady    = makeRemote("BoardReady",    "RemoteEvent")
 local RE_PenaltyNotify = makeRemote("PenaltyNotify", "RemoteEvent")
 local RE_PlaceBlock    = makeRemote("PlaceBlock",    "RemoteEvent")
 local RE_PickupBlock   = makeRemote("PickupBlock",   "RemoteEvent")
+local RE_PlaceEffect   = makeRemote("PlaceEffect",   "RemoteEvent") -- S→C: エフェクト通知
 
 ------------------------------------------------------------------------
 -- ゲーム状態
@@ -472,6 +473,7 @@ local function handlePlaceBlock(player, row, col, num)
 
 		addScore(player, ps, true)
 		RE_UpdateCell:FireAllClients(row, col, num, "correct")
+		RE_PlaceEffect:FireAllClients(row, col, "correct")
 
 		if gameState.remainingCells <= 0 then onWin() end
 
@@ -486,12 +488,13 @@ local function handlePlaceBlock(player, row, col, num)
 			ps.missTimes    = {}
 			ps.penaltyUntil = now + SPAM_PENALTY
 			ps.combo        = 0
-			BE_ApplyPenalty:Fire(player, SPAM_PENALTY)   -- ④ BlockManagerにドロップ指示
+			BE_ApplyPenalty:Fire(player, SPAM_PENALTY)
 			RE_PenaltyNotify:FireClient(player, SPAM_PENALTY)
 			print(string.format("[GameManager] Penalty → %s", player.Name))
 		end
 
 		RE_UpdateCell:FireAllClients(row, col, num, "wrong")
+		RE_PlaceEffect:FireAllClients(row, col, "wrong")
 	end
 end
 
